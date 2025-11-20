@@ -34,16 +34,27 @@ Allowed actions (all via run_repo_command):
 - Before merge: git diff to review; then git checkout main && git merge --no-ff <branch>
 
 Workflow: plan first, then create/update worktree, then call Codex with a clear subtask, then run tests, then prepare/merge. Log each step and command (with worktree) in the final output.
+For larger tasks, split work into parallel subtasks and create separate worktrees for each subtask when it helps.
+When the user asks for specific worktree names, always create them explicitly using run_repo_command before proceeding.
+When the user gives explicit steps or commands (run_repo_command, codex exec, etc.), follow them verbatim before improvising.
 `,
   tools: [runRepoCommandTool],
 });
+
+type RunImplementation = typeof run;
+let runImplementation: RunImplementation = run;
+
+// For testing: allow injecting a mock run implementation.
+export function setRunImplementationForTesting(fn: RunImplementation) {
+  runImplementation = fn;
+}
 
 export async function runOrchestrator(options: OrchestratorRunOptions): Promise<string> {
   const baseDir: string =
     options.baseDir ?? process.env.ORCHESTRATOR_BASE_DIR ?? path.resolve(process.cwd(), "..");
 
   try {
-    const result = await run(orchestratorAgent, options.taskDescription, {
+    const result = await runImplementation(orchestratorAgent, options.taskDescription, {
       context: { baseDir },
     });
     return result.finalOutput ?? "";
