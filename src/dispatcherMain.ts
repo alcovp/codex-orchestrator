@@ -1,7 +1,10 @@
+import { loadEnv } from "./loadEnv.js";
 import { ConsoleTaskReporter, createInMemoryTaskSource, runTaskDispatcher } from "./taskDispatcher.js";
 import { TelegramTaskSource } from "./taskSources/telegramTaskSource.js";
 
 export async function main() {
+  loadEnv();
+
   const envTasks = process.env.DISPATCH_TASKS;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const adminTelegramId = process.env.ADMIN_TELEGRAM_ID;

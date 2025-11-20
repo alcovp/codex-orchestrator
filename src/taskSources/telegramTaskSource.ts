@@ -41,6 +41,7 @@ export interface TelegramApiGetUpdatesParams {
 
 export interface TelegramApiClient {
   getUpdates(params?: TelegramApiGetUpdatesParams): Promise<TelegramUpdate[]>;
+  sendMessage(params: { chat_id: number; text: string }): Promise<void>;
 }
 
 class FetchTelegramApiClient implements TelegramApiClient {
@@ -71,6 +72,23 @@ class FetchTelegramApiClient implements TelegramApiClient {
 
     return json.result ?? [];
   }
+
+  async sendMessage(params: { chat_id: number; text: string }): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: params.chat_id, text: params.text }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Telegram API responded with status ${response.status} on sendMessage`);
+    }
+
+    const json = await response.json();
+    if (!json?.ok) {
+      throw new Error(`Telegram API error on sendMessage: ${json?.description ?? "unknown error"}`);
+    }
+  }
 }
 
 export interface TelegramTaskSourceOptions {
@@ -92,6 +110,7 @@ export class TelegramTaskSource implements TaskSource {
   private readonly client: TelegramApiClient;
   private offset?: number;
   private queue: EnqueuedTask[] = [];
+  private readonly maxMessageLength = 3500; // Telegram limit is 4096; keep margin.
 
   constructor(options: TelegramTaskSourceOptions) {
     this.adminUserId = options.adminUserId;
@@ -148,5 +167,45 @@ export class TelegramTaskSource implements TaskSource {
         username: message.from.username,
       },
     });
+  }
+
+  async markDone(task: EnqueuedTask, result: string): Promise<void> {
+    const chatId = this.extractChatId(task);
+    if (!chatId) return;
+
+    const body = this.truncate(result);
+    const text = `✅ Task ${task.id} completed.\n${body || "(empty result)"}`;
+
+    try {
+      await this.client.sendMessage({ chat_id: chatId, text });
+    } catch (error) {
+      console.error("[telegram-task-source] Failed to send completion message:", error);
+    }
+  }
+
+  async markFailed(task: EnqueuedTask, error: Error): Promise<void> {
+    const chatId = this.extractChatId(task);
+    if (!chatId) return;
+
+    const details = this.truncate(error?.stack || error?.message || String(error));
+    const text = `❌ Task ${task.id} failed.\n${details}`;
+
+    try {
+      await this.client.sendMessage({ chat_id: chatId, text });
+    } catch (err) {
+      console.error("[telegram-task-source] Failed to send failure message:", err);
+    }
+  }
+
+  private truncate(text: string): string {
+    if (!text) return "";
+    if (text.length <= this.maxMessageLength) return text;
+    return `${text.slice(0, this.maxMessageLength)}\n[truncated ${text.length - this.maxMessageLength} chars]`;
+  }
+
+  private extractChatId(task: EnqueuedTask): number | null {
+    const meta = task.metadata as { chatId?: unknown } | undefined;
+    const chatId = meta?.chatId;
+    return typeof chatId === "number" ? chatId : null;
   }
 }

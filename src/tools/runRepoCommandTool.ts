@@ -8,6 +8,7 @@ import type { OrchestratorContext } from "../orchestratorTypes.js";
 
 const execAsync = promisify(exec);
 const LOG_FILE = path.resolve(process.cwd(), "run_repo_command.log");
+const DEFAULT_OUTPUT_LIMIT = 4000;
 
 function isTruthyEnv(name: string): boolean {
   const value = process.env[name];
@@ -56,6 +57,30 @@ function detectForbiddenGit(command: string): string | null {
   return match?.reason ?? null;
 }
 
+function resolveOutputLimit(): number {
+  const raw = process.env.RUN_REPO_OUTPUT_LIMIT;
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_OUTPUT_LIMIT;
+}
+
+function truncate(text: string, limit: number): { value: string; truncated: boolean } {
+  if (!text) return { value: "(empty)", truncated: false };
+  if (text.length <= limit) return { value: text, truncated: false };
+  return {
+    value: `${text.slice(0, limit)}\n[truncated ${text.length - limit} chars]`,
+    truncated: true,
+  };
+}
+
+function formatStream(label: string, data: string, limit: number) {
+  const safe = data?.trim() ? data.trimEnd() : "(empty)";
+  const { value } = truncate(safe, limit);
+  return `--- ${label} ---\n${value}`;
+}
+
 async function appendLog(entry: {
   worktree: string;
   cwd: string;
@@ -94,6 +119,7 @@ export async function runRepoCommand(
   const cwd = path.resolve(baseDir, worktree);
   const traceEnabled = isTruthyEnv("ORCHESTRATOR_TRACE");
   const dryRun = isTruthyEnv("ORCHESTRATOR_DRY_RUN");
+  const outputLimit = resolveOutputLimit();
 
   try {
     await fsPromises.access(cwd);
@@ -144,25 +170,21 @@ command: ${command}
 
   try {
     const { stdout, stderr } = await execAsync(command, { cwd });
-    const safeStdout = stdout?.trim() ? stdout : "(empty)";
-    const safeStderr = stderr?.trim() ? stderr : "(empty)";
-
     const outcomeMessage = `# run_repo_command
 cwd: ${cwd}
 command: ${command}
 
---- STDOUT ---
-${safeStdout}
+${formatStream("STDOUT", stdout, outputLimit)}
 
---- STDERR ---
-${safeStderr}`;
+${formatStream("STDERR", stderr, outputLimit)}`;
     await appendLog({ worktree, cwd, command, mode: "execute", outcome: "ok" });
     if (traceEnabled) {
       console.error(`[run_repo_command trace] OK ${command} @ ${cwd}`);
     }
     return outcomeMessage;
   } catch (error: any) {
-    const details = error?.stderr || error?.message || String(error);
+    const rawDetails = error?.stderr || error?.message || String(error);
+    const { value: details } = truncate(rawDetails, outputLimit);
     const outcome = `❌ Command "${command}" failed in "${cwd}":
 ${details}`;
     await appendLog({ worktree, cwd, command, mode: "execute", outcome });

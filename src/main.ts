@@ -1,6 +1,9 @@
+import { loadEnv } from "./loadEnv.js";
 import { runOrchestrator, type OrchestratorRunOptions } from "./orchestratorAgent.js";
 
 export async function main() {
+  loadEnv();
+
   const taskDescription = process.argv.slice(2).join(" ");
 
   if (!taskDescription) {

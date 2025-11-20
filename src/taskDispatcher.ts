@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { runOrchestrator, type OrchestratorRunOptions } from "./orchestratorAgent.js";
 
 export interface EnqueuedTask {
@@ -133,19 +135,60 @@ export function createInMemoryTaskSource(name: string, tasks: EnqueuedTask[]): T
 }
 
 export class ConsoleTaskReporter implements TaskReporter {
-  async onStart(task: EnqueuedTask) {
-    console.log(`[dispatcher] Starting task ${task.id} from ${task.source}: ${task.description}`);
+  private readonly logResults: boolean;
+  private readonly logFilePath: string | null;
+  private readonly maxResultLength: number;
+
+  constructor(options: { logResults?: boolean; logFilePath?: string | null; maxResultLength?: number } = {}) {
+    this.logResults = options.logResults ?? true;
+    this.logFilePath = options.logFilePath ?? path.resolve(process.cwd(), "dispatcher.log");
+    this.maxResultLength = options.maxResultLength ?? 4000;
   }
 
-  async onSuccess(task: EnqueuedTask) {
-    console.log(`[dispatcher] ✅ Completed task ${task.id} from ${task.source}`);
+  private taskLabel(task: EnqueuedTask) {
+    return `${task.source}:${task.id}`;
+  }
+
+  private truncate(text: string) {
+    if (!text) return "";
+    if (text.length <= this.maxResultLength) return text;
+    const omitted = text.length - this.maxResultLength;
+    return `${text.slice(0, this.maxResultLength)}\n[truncated ${omitted} more characters]`;
+  }
+
+  private async emit(message: string, { toFile = true }: { toFile?: boolean } = {}) {
+    console.log(message);
+
+    if (!toFile || !this.logFilePath) return;
+
+    const timestamp = new Date().toISOString();
+    try {
+      await fs.appendFile(this.logFilePath, `[${timestamp}] ${message}\n`);
+    } catch (error) {
+      console.warn("[dispatcher] Failed to write dispatcher log:", error);
+    }
+  }
+
+  async onStart(task: EnqueuedTask) {
+    await this.emit(`[dispatcher] Starting task ${this.taskLabel(task)}: ${task.description}`);
+  }
+
+  async onSuccess(task: EnqueuedTask, result: string) {
+    await this.emit(`[dispatcher] ✅ Completed task ${this.taskLabel(task)}`);
+
+    if (this.logResults) {
+      const trimmed = typeof result === "string" ? result.trim() : "";
+      const body = this.truncate(trimmed || "(empty result)");
+      await this.emit(`[dispatcher] Result for ${this.taskLabel(task)}:\n${body}`);
+    }
   }
 
   async onFailure(task: EnqueuedTask, error: Error) {
-    console.error(`[dispatcher] ❌ Task ${task.id} from ${task.source} failed:`, error);
+    const details = error?.stack || error?.message || String(error);
+    await this.emit(`[dispatcher] ❌ Task ${this.taskLabel(task)} failed:\n${details}`);
   }
 
   async onIdle() {
-    console.log("[dispatcher] No tasks available, sleeping...");
+    await this.emit("[dispatcher] No tasks available, sleeping...", { toFile: false });
   }
 }

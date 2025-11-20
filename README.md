@@ -19,6 +19,7 @@ yarn install
 Задайте переменные перед запуском:
 - `OPENAI_API_KEY` — ключ OpenAI.
 - `ORCHESTRATOR_BASE_DIR` — абсолютный путь к каталогу, где лежат git worktree целевого проекта.
+- Можно положить их в `.env` в корне — `yarn orchestrator` и `yarn dispatcher` подхватывают файл автоматически.
 
 Пример структуры worktree:
 ```
@@ -60,10 +61,13 @@ yarn orchestrator "Refactor billing module and add tests"
   export ADMIN_TELEGRAM_ID="123456789"
   yarn dispatcher
   ```
+  Ответы (успех/ошибка) возвращаются тому же пользователю сообщением в Telegram.
   Можно комбинировать с `DISPATCH_TASKS` — сначала выполнятся env-задачи, затем диспетчер остаётся в режиме поллинга Telegram.
 
 ## Отладка и логирование
 - Все вызовы `run_repo_command` пишутся в `run_repo_command.log` в корне оркестратора.
+- `yarn dispatcher` дополнительно пишет ход выполнения и итоговый вывод агентa в `dispatcher.log`.
+- Возвратное тело `run_repo_command` для агента обрезается (по умолчанию 4000 символов), чтобы не раздувать промпт; полные выводы остаются в логах. Лимит можно настроить переменной `RUN_REPO_OUTPUT_LIMIT`.
 - Флаги окружения:
   - `ORCHESTRATOR_TRACE=1` — выводить trace сообщений в stderr при каждом вызове инструмента.
   - `ORCHESTRATOR_DRY_RUN=1` — не выполнять команды, а только логировать и возвращать их как пропущенные (удобно для проверки сценария).

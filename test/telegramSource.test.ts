@@ -5,6 +5,7 @@ import type { TelegramApiClient, TelegramApiGetUpdatesParams } from "../src/task
 
 class MockTelegramClient implements TelegramApiClient {
   private readonly updates: any[];
+  public sentMessages: Array<{ chat_id: number; text: string }> = [];
 
   constructor(updates: any[]) {
     this.updates = updates;
@@ -13,6 +14,10 @@ class MockTelegramClient implements TelegramApiClient {
   async getUpdates(params?: TelegramApiGetUpdatesParams) {
     const offset = params?.offset;
     return this.updates.filter((u) => offset === undefined || u.update_id >= offset);
+  }
+
+  async sendMessage(params: { chat_id: number; text: string }) {
+    this.sentMessages.push(params);
   }
 }
 
@@ -70,6 +75,40 @@ test("TelegramTaskSource enqueues only admin text messages", async () => {
   assert.equal(task1?.description, "Task 1");
   assert.equal(task2?.description, "Task 2");
   assert.equal(task3, null);
+});
+
+test("TelegramTaskSource sends completion/failure messages back", async () => {
+  const updates = [
+    {
+      update_id: 10,
+      message: {
+        message_id: 101,
+        from: { id: 555 },
+        chat: { id: 42, type: "private" },
+        text: "Do it",
+      },
+    },
+  ];
+
+  const client = new MockTelegramClient(updates);
+  const source = new TelegramTaskSource({
+    token: "fake",
+    adminUserId: 555,
+    client,
+    pollTimeoutSeconds: 0,
+  });
+
+  const task = await source.nextTask();
+  assert.ok(task);
+
+  await source.markDone(task!, "result body");
+  await source.markFailed(task!, new Error("boom"));
+
+  assert.equal(client.sentMessages.length, 2);
+  assert.equal(client.sentMessages[0].chat_id, 42);
+  assert.equal(client.sentMessages[1].chat_id, 42);
+  assert.match(client.sentMessages[0].text, /completed/i);
+  assert.match(client.sentMessages[1].text, /failed/i);
 });
 
 test("TelegramTaskSource advances offset to avoid duplicate tasks", async () => {
