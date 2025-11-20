@@ -23,7 +23,7 @@
 - **CLI-вход** (`yarn orchestrator`): читает задачу и запускает Orchestrator Agent с контекстом worktree.
 - **Orchestrator Agent** (gpt-5.x): сеньор/тимлид, управляющий Codex-воркерами через git и shell; использует инструмент `run_repo_command`.
 - **Инструмент run_repo_command**: function tool, принимает `worktree`, `command`; вычисляет `cwd = <baseDir>/<worktree>`, проверяет наличие директории и белый список команд, выполняет через `exec`, возвращает stdout/stderr. Все вызовы логируются в `run_repo_command.log` в корне оркестратора.
-- **Task Dispatcher** (`src/taskDispatcher.ts`): абстрактный цикл, который опрашивает источники задач (бот, API, трекер) и для каждой вызывает `runOrchestrator`; есть demo-CLI `yarn dispatcher` с env `DISPATCH_TASKS`.
+- **Task Dispatcher** (`src/taskDispatcher.ts`): абстрактный цикл, который опрашивает источники задач (бот, API, трекер) и для каждой вызывает `runOrchestrator`; есть demo-CLI `yarn dispatcher` с env `DISPATCH_TASKS` и Telegram-источником (см. ниже).
 - **Контекст OrchestratorContext**: минимум поле `baseDir: string` — абсолютный путь к директории с worktree.
 
 ### Разделение ответственности
@@ -35,6 +35,7 @@
 ### Переменные окружения
 - `OPENAI_API_KEY` — ключ OpenAI (обязателен).
 - `ORCHESTRATOR_BASE_DIR` — абсолютный путь к директории с git worktree целевого проекта.
+- Для Telegram-диспетчера (опционально): `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_ID`.
 
 ### Типичная структура
 ```
@@ -123,6 +124,13 @@ Orchestrator Agent:
 - Команды внутри подзадач (Codex, тесты, diff) можно запускать параллельно через `Promise.all`, указывая конкретный worktree в каждом `run_repo_command`.
 - Сборка результата — строго последовательно: переключение в `main`, `git merge --no-ff <branch>` по очереди, при необходимости быстрые smoke-тесты после каждого мёрджа.
 - Если возник конфликт, соответствующую ветку возвращают в работу в её worktree до повторного мёрджа; остальные готовые ветки можно продолжать мёрджить по очереди.
+
+## Тесты
+- Интеграционные тесты создают временные git-репо и вызывают Codex; они долгие и стоят денег (API). Запускайте только осознанно / по необходимости, избегайте прогонов после каждой мелкой задачи.
+
+## Диспетчер задач
+- `yarn dispatcher` запускает `runTaskDispatcher`: если заданы `TELEGRAM_BOT_TOKEN` и `ADMIN_TELEGRAM_ID`, задачи берутся из Telegram (каждое текстовое сообщение от admin id); можно добавить `DISPATCH_TASKS` как стартовый список.
+- При активном Telegram-источнике диспетчер не завершается (polling).
 
 ## Флаги отладки
 - `ORCHESTRATOR_TRACE=1` — trace-вывод каждого вызова run_repo_command.

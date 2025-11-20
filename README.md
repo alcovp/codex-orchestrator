@@ -54,6 +54,13 @@ yarn orchestrator "Refactor billing module and add tests"
 - Интерфейсы: `TaskSource` (даёт задачи), `TaskReporter` (логирует события), `runTaskDispatcher` (цикл опроса).
 - Пример источника — `createInMemoryTaskSource`, полезен для тестов/демо. Легко заменить на API/бот/сканер трекера.
 - CLI-демо: `DISPATCH_TASKS="Task A\nTask B" yarn dispatcher` — задачи берутся из env, исполняются по очереди и диспетчер завершается.
+- Telegram-источник: если задать `TELEGRAM_BOT_TOKEN` и `ADMIN_TELEGRAM_ID`, диспетчер будет поллить бота и каждое сообщение от указанного пользователя превращать в задачу. Пример:
+  ```bash
+  export TELEGRAM_BOT_TOKEN="12345:..."
+  export ADMIN_TELEGRAM_ID="123456789"
+  yarn dispatcher
+  ```
+  Можно комбинировать с `DISPATCH_TASKS` — сначала выполнятся env-задачи, затем диспетчер остаётся в режиме поллинга Telegram.
 
 ## Отладка и логирование
 - Все вызовы `run_repo_command` пишутся в `run_repo_command.log` в корне оркестратора.
