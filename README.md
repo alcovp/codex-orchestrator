@@ -45,8 +45,15 @@ yarn orchestrator "Refactor billing module and add tests"
   - вычисляет `cwd = <ORCHESTRATOR_BASE_DIR>/<worktree>`;
   - проверяет, что директория существует;
   - разрешает только безопасные префиксы команд (git, codex, ls, pwd, cat, npm, yarn, pnpm, pytest, node);
+  - блокирует опасные git-операции: push, remote, reset, rebase;
   - выполняет команду и возвращает stdout/stderr.
 - Агенты не редактируют файлы напрямую — всё делается через shell-команды и Codex CLI внутри worktree.
+
+## Отладка и логирование
+- Все вызовы `run_repo_command` пишутся в `run_repo_command.log` в корне оркестратора.
+- Флаги окружения:
+  - `ORCHESTRATOR_TRACE=1` — выводить trace сообщений в stderr при каждом вызове инструмента.
+  - `ORCHESTRATOR_DRY_RUN=1` — не выполнять команды, а только логировать и возвращать их как пропущенные (удобно для проверки сценария).
 
 ## Использование как библиотеки
 Из кода можно вызвать:

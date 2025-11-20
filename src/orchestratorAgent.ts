@@ -34,7 +34,7 @@ Allowed actions (all via run_repo_command):
 - Before merge: git diff to review; then git checkout main && git merge --no-ff <branch>
 
 Workflow: plan first, then create/update worktree, then call Codex with a clear subtask, then run tests, then prepare/merge. Log each step and command (with worktree) in the final output.
-For larger tasks, split work into parallel subtasks and create separate worktrees for each subtask when it helps.
+For larger tasks, split work into parallel subtasks: create per-subtask worktrees named task-<slug> from origin/main, dispatch Codex/test commands per worktree in parallel (Promise.all), then serialize merges back into main after checks.
 When the user asks for specific worktree names, always create them explicitly using run_repo_command before proceeding.
 When the user gives explicit steps or commands (run_repo_command, codex exec, etc.), follow them verbatim before improvising.
 `,
