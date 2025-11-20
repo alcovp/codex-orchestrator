@@ -23,6 +23,7 @@
 - **CLI-вход** (`yarn orchestrator`): читает задачу и запускает Orchestrator Agent с контекстом worktree.
 - **Orchestrator Agent** (gpt-5.x): сеньор/тимлид, управляющий Codex-воркерами через git и shell; использует инструмент `run_repo_command`.
 - **Инструмент run_repo_command**: function tool, принимает `worktree`, `command`; вычисляет `cwd = <baseDir>/<worktree>`, проверяет наличие директории и белый список команд, выполняет через `exec`, возвращает stdout/stderr. Все вызовы логируются в `run_repo_command.log` в корне оркестратора.
+- **Task Dispatcher** (`src/taskDispatcher.ts`): абстрактный цикл, который опрашивает источники задач (бот, API, трекер) и для каждой вызывает `runOrchestrator`; есть demo-CLI `yarn dispatcher` с env `DISPATCH_TASKS`.
 - **Контекст OrchestratorContext**: минимум поле `baseDir: string` — абсолютный путь к директории с worktree.
 
 ### Разделение ответственности

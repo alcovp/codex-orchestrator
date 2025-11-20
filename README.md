@@ -49,6 +49,12 @@ yarn orchestrator "Refactor billing module and add tests"
   - выполняет команду и возвращает stdout/stderr.
 - Агенты не редактируют файлы напрямую — всё делается через shell-команды и Codex CLI внутри worktree.
 
+## Диспетчер задач
+- В `src/taskDispatcher.ts` есть абстрактный диспетчер, который опрашивает источники задач и для каждой вызывает `runOrchestrator`.
+- Интерфейсы: `TaskSource` (даёт задачи), `TaskReporter` (логирует события), `runTaskDispatcher` (цикл опроса).
+- Пример источника — `createInMemoryTaskSource`, полезен для тестов/демо. Легко заменить на API/бот/сканер трекера.
+- CLI-демо: `DISPATCH_TASKS="Task A\nTask B" yarn dispatcher` — задачи берутся из env, исполняются по очереди и диспетчер завершается.
+
 ## Отладка и логирование
 - Все вызовы `run_repo_command` пишутся в `run_repo_command.log` в корне оркестратора.
 - Флаги окружения:

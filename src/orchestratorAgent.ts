@@ -56,6 +56,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
   try {
     const result = await runImplementation(orchestratorAgent, options.taskDescription, {
       context: { baseDir },
+      maxTurns: 30,
     });
     return result.finalOutput ?? "";
   } catch (error) {

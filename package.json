@@ -7,6 +7,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/main.ts",
     "orchestrator": "tsx src/main.ts",
+    "dispatcher": "tsx src/dispatcherMain.ts",
     "test": "node --test --import tsx test/**/*.test.ts"
   },
   "dependencies"
