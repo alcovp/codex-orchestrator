@@ -4,6 +4,7 @@
   "packageManager": "yarn@4.11.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/main.ts",
     "orchestrator": "tsx src/main.ts",
     "test": "node --test --import tsx test/**/*.test.ts"

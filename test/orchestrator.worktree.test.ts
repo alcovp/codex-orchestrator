@@ -70,6 +70,7 @@ test("orchestrator (live) creates multiple worktrees in a fresh repo", async () 
 
 test(
   "orchestrator (live) runs codex in two worktrees and merges to main",
+  { timeout: 180_000 },
   async () => {
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
     const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-live-merge-"));
@@ -110,11 +111,11 @@ test(
       await rm(baseDir, { recursive: true, force: true });
     }
   },
-  { timeout: 180_000 },
 );
 
 test(
   "orchestrator (live) can create a file using codex (with fallback)",
+  { timeout: 120_000 },
   async () => {
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
     const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-codex-"));
@@ -152,5 +153,4 @@ test(
       await rm(baseDir, { recursive: true, force: true });
     }
   },
-  { timeout: 120_000 },
 );
