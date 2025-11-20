@@ -1,0 +1,121 @@
+# Codex Orchestrator Guide
+
+Этот репозиторий содержит оркестратор, который управляет Codex CLI и git‑репозиториями с несколькими worktree. Один «умный» агент (через OpenAI Agents SDK) координирует несколько инстансов Codex CLI, которые правят код, запускают тесты и работают с конкретными репозиториями. Все автоматические правки (Codex, другие агенты) должны следовать правилам ниже.
+
+## 1. Назначение
+
+### Цели
+- Связка: Orchestrator Agent (OpenAI Agents SDK) + Codex CLI (как воркер).
+- Возможности: создавать/обновлять git worktree для задач, запускать Codex CLI, гонять тесты, смотреть git diff, мёржить локально — никогда не пушить в origin.
+- Оркестратор остаётся тонким: минимум доменной логики, правки делегируются Codex CLI.
+
+### Что репозиторий не делает
+- Не содержит бизнес‑логики целевого проекта.
+- Не общается с внешними сервисами, кроме OpenAI API.
+- Не пушит в удалённые репозитории.
+- Не занимается CI/CD — только локальная автоматизация.
+
+## 2. Архитектура
+
+### Основные компоненты
+- **CLI-вход** (`yarn orchestrator`): читает задачу и запускает Orchestrator Agent с контекстом worktree.
+- **Orchestrator Agent** (gpt-5.x): сеньор/тимлид, управляющий Codex-воркерами через git и shell; использует инструмент `run_repo_command`.
+- **Инструмент run_repo_command**: function tool, принимает `worktree`, `command`; вычисляет `cwd = <baseDir>/<worktree>`, проверяет наличие директории и белый список команд, выполняет через `exec`, возвращает stdout/stderr.
+- **Контекст OrchestratorContext**: минимум поле `baseDir: string` — абсолютный путь к директории с worktree.
+
+### Разделение ответственности
+- **Orchestrator Agent**: планирует, решает, какие git/Codex команды запускать и в каком порядке; вызывает только `run_repo_command`, файлы напрямую не читает/не пишет.
+- **Codex CLI** (в целевых worktree): правит файлы, запускает тесты/утилиты, работает внутри одного git worktree.
+
+## 3. Окружение и структура каталогов
+
+### Переменные окружения
+- `OPENAI_API_KEY` — ключ OpenAI (обязателен).
+- `ORCHESTRATOR_BASE_DIR` — абсолютный путь к директории с git worktree целевого проекта.
+
+### Типичная структура
+```
+/some/path/ORCHESTRATION_ROOT/
+  codex-orchestrator/    # этот репозиторий (Node/TS)
+  main/                  # worktree с веткой main
+  task-users-search/     # worktree под задачу
+  task-billing-optim/    # ещё один worktree
+```
+В коде: `ORCHESTRATOR_BASE_DIR = /some/path/ORCHESTRATION_ROOT`.
+Примеры `run_repo_command`:  
+`worktree="main"` → `/some/path/ORCHESTRATION_ROOT/main`  
+`worktree="task-users-search"` → `/some/path/ORCHESTRATION_ROOT/task-users-search`
+
+## 4. Правила работы с git
+
+### Общие принципы
+- Работать только с локальными ветками и worktree.
+- Основание для новых задач — ветка main (если не указано иное).
+- Не трогать origin без явного письменного разрешения.
+- История должна быть аккуратной: осмысленные ветки и коммиты.
+
+### Разрешённые операции (через run_repo_command)
+- Инфо: `git status`, `git log`, `git branch (-a)`, `git diff`.
+- Worktree (обычно в `main`): `git worktree list`, `git worktree add ../task-<имя> origin/main`, `git worktree remove <путь>` (только временные).
+- Ветки (внутри worktree): `git checkout/switch`, `git checkout -B <branch> origin/main`, `git branch -d <branch>` после мёрджа.
+- Локальные коммиты: `git add <...>`, `git commit -m "..."`
+- Локальные мёрджи (в `main`): `git merge --no-ff <branch>` или `git merge <branch>` без конфликтов.
+- Обновление main (по согласованию): `git fetch origin`; аккуратный `git pull --ff-only` или `git reset --hard origin/main` только если явно разрешено и нет незакоммиченных изменений.
+
+### Условно разрешённые (крайняя необходимость)
+- `git clean -fd` во временных worktree, если нет ценных untracked файлов.
+- `git reset` (без `--hard`) для правки истории в рамках задачи.
+- Перед такими командами: зафиксировать план и последствия (например, удаление untracked).
+
+## 5. Правила работы с Codex CLI
+
+### Общая схема
+- Codex CLI запускается внутри конкретного worktree через `run_repo_command`, напр.:  
+  `worktree="task-users-search", command='codex exec --full-auto "<описание>"'`.
+- Codex отвечает за правки кода/конфигов, запуск тестов/утилит, коммиты (по запросу).
+
+### Рекомендуемые команды
+- Базово: `codex exec --full-auto "<подробная задача>"`.
+- При необходимости полного доступа: `codex exec --full-auto --sandbox danger-full-access "<подробная задача>"`.
+- Задача для Codex должна описывать цель, ограничения, какие тесты прогнать, что считать готовым.
+
+### Частота вызовов
+- Лучше несколько маленьких вызовов, чем один огромный. Примеры шагов:
+  - «Подготовь скелет изменений и комментарии»
+  - «Дополни реализацию и напиши тесты»
+  - «Прогони тесты и поправь, если падают»
+
+## 6. Ограничения безопасности (нельзя)
+
+### Git/origin
+- Абсолютно запрещено: любой `git push` (push, push origin, push branch, --force, --all и т.п.).
+- Нельзя менять ремоуты: `git remote add/remove/set-url/rename`.
+- Нельзя сложные переписывания без разрешения: `git rebase`, `git filter-branch`, `git filter-repo`, агрессивный `git reset --hard` в worktree main.
+- Относиться к origin/main как к источнику правды, локальный main — копия, ничего не отправлять обратно.
+
+### Опасные shell-команды
+- Нельзя команды, разрушающие ФС: `rm -rf /`, `rm -rf .`, `rm -rf *` и подобные; массовые удаления вне worktree; `sudo` и любые привилегии.
+- Белый список в `run_repo_command`: только префиксы git, codex, ls, pwd, cat, npm, yarn, pnpm, pytest, node и т.п.; остальные отклоняются.
+
+### Изменение зависимостей
+- По умолчанию не менять зависимости: не запускать `npm install`, `yarn add`, `pnpm add` и массовые обновления без запроса.
+- Точечные изменения — только если явно указано или есть согласованный план миграции.
+
+## 7. Типичный сценарий
+
+Пользователь: `yarn orchestrator "<большая задача>"`.
+
+Orchestrator Agent:
+- Читает задачу, строит план (подзадачи, последовательность/параллельность).
+- Для подзадачи:
+  - В worktree `main`: `git fetch origin`; при отсутствии worktree — `git worktree add ../task-<имя> origin/main`.
+  - В рабочем worktree `task-<имя>`: `git checkout -B <branch> origin/main`; `codex exec --full-auto "<подзадача>"`; опционально `git status`, `git diff`; тесты (pytest, npm/yarn test); коммит с осмысленным сообщением.
+- Проверка/мёрдж: после тестов и нормального diff — в worktree `main`: `git merge --no-ff <branch>`, затем `git diff`, `git log` для проверки; никаких git push.
+
+Финальный отчёт: кратко перечислить шаги (созданные worktree/ветки, какие команды git/Codex), результаты тестов, какие файлы/модули затронуты.
+
+## 8. TODO и расширения
+
+- Более строгий парсер для `run_repo_command`: явно блокировать git push/remote, опасные reset/rebase и т.п.; логировать все команды и вывод в отдельные логи.
+- Отдельный Review-агент: получает git diff + лог тестов, пишет ревью и решает, можно ли мёржить или дорабатывать.
+- Шаблоны задач для Codex CLI, чтобы подставлять их в `codex exec --full-auto` по типу работы (фича, рефакторинг, фиксы, миграции, автогенерация тестов и т.д.).
