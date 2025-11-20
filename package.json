@@ -1,7 +1,7 @@
 {
   "name": "codex-orchestrator",
   "type": "module",
-  "packageManager": "yarn@3.5.1",
+  "packageManager": "yarn@4.11.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/main.ts",
