@@ -38,6 +38,13 @@ Example skeleton (pseudocode):
 - merge = codex_merge_results({ project_root: "<main-worktree-path>", base_branch: "main", subtasks_results })
 - Final reply: merge JSON as text (status, notes, touched_files)
 
+Verbose logging requirements (respond in plain text):
+- After planner: print "PLAN (N subtasks)" and embed the JSON plan (full or truncated if huge).
+- For each subtask: log "SUBTASK <id> @ <worktree> -> <status>" and include the returned JSON summary.
+- Before merge: show the array you pass into codex_merge_results (subtask_id/worktree_path/summary).
+- After merge: print the merge JSON (status/notes/touched_files).
+- Final reply: reiterate merge status + touched_files + notes; keep it concise but include counts (subtasks total/completed).
+
 Constraints:
 - Never skip codex_plan_task on dev work.
 - Never return early without running the tools above.

@@ -1,4 +1,5 @@
 import { loadEnv } from "./loadEnv.js";
+import { runDeterministicWithLogging } from "./deterministicOrchestrator.js";
 import { ConsoleTaskReporter, createInMemoryTaskSource, runTaskDispatcher } from "./taskDispatcher.js";
 import { TelegramTaskSource } from "./taskSources/telegramTaskSource.js";
 
@@ -8,6 +9,8 @@ export async function main() {
   const envTasks = process.env.DISPATCH_TASKS;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const adminTelegramId = process.env.ADMIN_TELEGRAM_ID;
+  const orchestratorMode = process.env.ORCHESTRATOR_MODE ?? "agent";
+  const useDeterministic = orchestratorMode === "deterministic";
 
   const sources = [];
   let stopWhenEmpty = true;
@@ -61,6 +64,10 @@ export async function main() {
     sources,
     reporter: new ConsoleTaskReporter(),
     stopWhenEmpty,
+    runOrchestratorFn: useDeterministic
+      ? async ({ taskDescription, baseDir }) =>
+          runDeterministicWithLogging({ userTask: taskDescription, baseDir })
+      : undefined,
   });
 }
 

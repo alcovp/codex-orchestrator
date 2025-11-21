@@ -35,6 +35,43 @@ export interface DeterministicOrchestratorResult {
   mergeResult: CodexMergeResultsResult;
 }
 
+export function formatDeterministicReport(result: DeterministicOrchestratorResult): string {
+  const lines: string[] = [];
+
+  const indentJson = (value: unknown) => JSON.stringify(value, null, 2);
+
+  lines.push(`PLAN (${result.plan.subtasks.length} subtasks):`);
+  lines.push(indentJson(result.plan));
+
+  for (const item of result.subtaskResults) {
+    lines.push(
+      `SUBTASK ${item.subtask.id} @ ${item.worktreePath} -> ${item.result.status}`,
+      indentJson(item.result),
+    );
+  }
+
+  const mergeInput = result.subtaskResults.map((r) => ({
+    subtask_id: r.subtask.id,
+    worktree_path: r.worktreePath,
+    summary: r.result.summary,
+  }));
+
+  lines.push("MERGE INPUT:", indentJson(mergeInput));
+  lines.push("MERGE RESULT:", indentJson(result.mergeResult));
+
+  const touched =
+    result.mergeResult.touched_files && result.mergeResult.touched_files.length > 0
+      ? result.mergeResult.touched_files.join(", ")
+      : "(none)";
+  const notes = result.mergeResult.notes?.trim() || "(none)";
+  lines.push(
+    "FINAL:",
+    `status=${result.mergeResult.status}; subtasks=${result.subtaskResults.length}; touched_files=${touched}; notes=${notes}`,
+  );
+
+  return lines.join("\n");
+}
+
 function resolveBaseDir(baseDir?: string): string {
   return baseDir ?? process.env.ORCHESTRATOR_BASE_DIR ?? path.resolve(process.cwd(), "..");
 }
@@ -147,4 +184,11 @@ export async function runDeterministicOrchestrator(
   );
 
   return { plan, subtaskResults, mergeResult };
+}
+
+export async function runDeterministicWithLogging(
+  options: DeterministicOrchestratorOptions,
+): Promise<string> {
+  const result = await runDeterministicOrchestrator(options);
+  return formatDeterministicReport(result);
 }
