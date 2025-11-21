@@ -18,7 +18,7 @@ const OUTPUT_TRUNCATE = 2000;
 const SubtaskInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
   worktree_name: z.string().describe("Name for the worktree under .codex/jobs/<jobId>/worktrees/."),
-  job_id: z.string().optional().describe("Job id to place worktrees under .codex/jobs/<jobId>."),
+  job_id: z.string().describe("Job id to place worktrees under .codex/jobs/<jobId>."),
   base_branch: z
     .string()
     .describe("Base branch/ref for git worktree add (e.g., main, HEAD, origin/main).")

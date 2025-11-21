@@ -17,7 +17,7 @@ const OUTPUT_TRUNCATE = 2000;
 
 const MergeInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
-  job_id: z.string().optional().describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees."),
+  job_id: z.string().describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees."),
   base_branch: z.string().default("main"),
   result_branch: z.string().optional().describe("Override for the result branch name."),
   subtasks_results: z
