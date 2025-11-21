@@ -54,6 +54,10 @@ export function setPlannerExecImplementation(fn: PlannerExec | null) {
 }
 
 function resolveProjectRoot(projectRoot: string, runContext?: RunContext<OrchestratorContext>): string {
+  if (runContext?.context?.repoRoot) {
+    return runContext.context.repoRoot;
+  }
+
   if (path.isAbsolute(projectRoot)) {
     return projectRoot;
   }
