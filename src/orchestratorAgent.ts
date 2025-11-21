@@ -1,6 +1,7 @@
 import { Agent, run } from "@openai/agents";
 import path from "node:path";
 import type { OrchestratorContext } from "./orchestratorTypes.js";
+import { codexPlanTaskTool } from "./tools/codexPlanTaskTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
 
 export interface OrchestratorRunOptions {
@@ -38,7 +39,7 @@ For larger tasks, split work into parallel subtasks: create per-subtask worktree
 When the user asks for specific worktree names, always create them explicitly using run_repo_command before proceeding.
 When the user gives explicit steps or commands (run_repo_command, codex exec, etc.), follow them verbatim before improvising.
 `,
-  tools: [runRepoCommandTool],
+  tools: [runRepoCommandTool, codexPlanTaskTool],
 });
 
 type RunImplementation = typeof run;
