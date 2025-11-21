@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { runOrchestrator } from "../src/orchestratorAgent.js";
 
 function isNoLiveTests(): boolean {
-  const value = process.env.NO_LIVE_TESTS;
+  const value = process.env.SKIP_LIVE_TESTS;
   if (!value) return false;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
@@ -39,7 +39,7 @@ function loadEnvFromDotenv() {
 
 test("orchestrator (live) creates multiple worktrees in a fresh repo", async (t) => {
   if (SKIP_LIVE) {
-    t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+    t.diagnostic("SKIP_LIVE_TESTS set; skipping live orchestrator test.");
     return;
   }
   const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
@@ -85,7 +85,7 @@ test(
   { timeout: 180_000 },
   async (t) => {
     if (SKIP_LIVE) {
-      t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+      t.diagnostic("SKIP_LIVE_TESTS set; skipping live orchestrator test.");
       return;
     }
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
@@ -136,7 +136,7 @@ test(
   { timeout: 120_000 },
   async (t) => {
     if (SKIP_LIVE) {
-      t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+      t.diagnostic("SKIP_LIVE_TESTS set; skipping live orchestrator test.");
       return;
     }
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;

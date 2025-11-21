@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { runDeterministicOrchestrator } from "../src/deterministicOrchestrator.js";
 
 function isNoLiveTests(): boolean {
-  const value = process.env.NO_LIVE_TESTS;
+  const value = process.env.SKIP_LIVE_TESTS;
   if (!value) return false;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
@@ -19,7 +19,7 @@ test(
   { timeout: 300_000 },
   async (t) => {
     if (SKIP_LIVE) {
-      t.diagnostic("NO_LIVE_TESTS set; skipping live deterministic pipeline smoke.");
+      t.diagnostic("SKIP_LIVE_TESTS set; skipping live deterministic pipeline smoke.");
       return;
     }
 
