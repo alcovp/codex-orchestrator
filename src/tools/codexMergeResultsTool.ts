@@ -87,6 +87,11 @@ async function ensureParentDir(p: string) {
   await mkdir(parent, { recursive: true });
 }
 
+function sanitizeBranchName(name: string, fallback: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._/-]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleaned || fallback;
+}
+
 function buildMergePrompt(subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string }>): string {
   const jsonPayload = JSON.stringify(subtasksResults, null, 2);
   return [
@@ -166,9 +171,10 @@ export async function codexMergeResults(
 
   const exists = await pathExists(mergeWorktree);
   if (!exists) {
+    const branchName = sanitizeBranchName(MERGE_WORKTREE_NAME, `merge-${Date.now()}`);
     await execImplementation({
       program: "git",
-      args: ["worktree", "add", mergeWorktree, params.base_branch ?? "main"],
+      args: ["worktree", "add", "-b", branchName, mergeWorktree, params.base_branch ?? "main"],
       cwd: projectRoot,
     });
   }

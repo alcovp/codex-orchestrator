@@ -52,7 +52,7 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
 
     assert.deepEqual(result, sample);
     assert.equal(calls[0]?.program, "git");
-    assert.deepEqual(calls[0]?.args, ["worktree", "add", mergeWorktree, "main"]);
+    assert.deepEqual(calls[0]?.args, ["worktree", "add", "-b", "merge-final", mergeWorktree, "main"]);
     assert.equal(calls[0]?.cwd, projectRoot);
     assert.equal(calls[1]?.program, "codex");
     assert.equal(calls[1]?.cwd, mergeWorktree);

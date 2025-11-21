@@ -52,7 +52,7 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
 
     assert.deepEqual(result, sample);
     assert.equal(calls[0]?.program, "git");
-    assert.deepEqual(calls[0]?.args, ["worktree", "add", worktreeDir, "main"]);
+    assert.deepEqual(calls[0]?.args, ["worktree", "add", "-b", "wt-alpha", worktreeDir, "main"]);
     assert.equal(calls[0]?.cwd, projectRoot);
     assert.equal(calls[1]?.program, "codex");
     assert.equal(calls[1]?.cwd, worktreeDir);
@@ -97,6 +97,7 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
       {
         project_root: projectRoot,
         worktree_name: worktreeName,
+        base_branch: "main",
         subtask: { id: "s2", title: "Failing task", description: "desc" },
       },
       { context: { baseDir } } as any,

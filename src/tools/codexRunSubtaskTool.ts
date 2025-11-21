@@ -83,6 +83,11 @@ async function ensureParentDir(p: string) {
   await mkdir(parent, { recursive: true });
 }
 
+function sanitizeBranchName(name: string, fallback: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._/-]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleaned || fallback;
+}
+
 function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"]): string {
   return [
     `Задача: ${subtask.title}`,
@@ -163,9 +168,10 @@ export async function codexRunSubtask(
 
   const exists = await pathExists(worktreeDir);
   if (!exists) {
+    const branchName = sanitizeBranchName(params.worktree_name, `wt-${Date.now()}`);
     await execImplementation({
       program: "git",
-      args: ["worktree", "add", worktreeDir, params.base_branch ?? "main"],
+      args: ["worktree", "add", "-b", branchName, worktreeDir, params.base_branch ?? "main"],
       cwd: projectRoot,
     });
   }
