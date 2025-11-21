@@ -7,6 +7,14 @@ import path from "node:path";
 import { test } from "node:test";
 import { runOrchestrator } from "../src/orchestratorAgent.js";
 
+function isNoLiveTests(): boolean {
+  const value = process.env.NO_LIVE_TESTS;
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+const SKIP_LIVE = isNoLiveTests();
+
 async function assertExists(p: string) {
   await access(p);
 }
@@ -29,7 +37,11 @@ function loadEnvFromDotenv() {
   }
 }
 
-test("orchestrator (live) creates multiple worktrees in a fresh repo", async () => {
+test("orchestrator (live) creates multiple worktrees in a fresh repo", async (t) => {
+  if (SKIP_LIVE) {
+    t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+    return;
+  }
   const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-live-"));
   const mainDir = path.join(baseDir, "main");
@@ -71,7 +83,11 @@ test("orchestrator (live) creates multiple worktrees in a fresh repo", async () 
 test(
   "orchestrator (live) runs codex in two worktrees and merges to main",
   { timeout: 180_000 },
-  async () => {
+  async (t) => {
+    if (SKIP_LIVE) {
+      t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+      return;
+    }
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
     const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-live-merge-"));
     const mainDir = path.join(baseDir, "main");
@@ -116,7 +132,11 @@ test(
 test(
   "orchestrator (live) can create a file using codex (with fallback)",
   { timeout: 120_000 },
-  async () => {
+  async (t) => {
+    if (SKIP_LIVE) {
+      t.diagnostic("NO_LIVE_TESTS set; skipping live orchestrator test.");
+      return;
+    }
     const originalBaseDir = process.env.ORCHESTRATOR_BASE_DIR;
     const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-codex-"));
     const mainDir = path.join(baseDir, "main");

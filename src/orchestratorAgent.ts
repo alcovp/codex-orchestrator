@@ -2,6 +2,7 @@ import { Agent, run } from "@openai/agents";
 import path from "node:path";
 import type { OrchestratorContext } from "./orchestratorTypes.js";
 import { codexPlanTaskTool } from "./tools/codexPlanTaskTool.js";
+import { codexRunSubtaskTool } from "./tools/codexRunSubtaskTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
 
 export interface OrchestratorRunOptions {
@@ -21,25 +22,20 @@ const orchestratorAgent = new Agent<OrchestratorContext>({
   name: "Codex Orchestrator",
   model: "gpt-5.1",
   instructions: `
-You are a senior engineer / tech lead orchestrating work across git worktrees.
-You operate on a repo split into multiple worktrees under "baseDir".
-Never edit files directly; only use shell commands through the provided tool.
+You are the Codex Orchestrator. You are intentionally dumb: do NOT write code, do NOT analyze source files, do NOT improvise implementation details. Your job is only to call tools and pass JSON between them.
 
-Layout:
-- baseDir/main: primary worktree on branch main
-- baseDir/task-*: temporary worktrees for tasks
+Protocol (for any dev request):
+1) Always call codex_plan_task first with the user task and project root to get a JSON plan.
+2) For each subtask from the plan, run codex_run_subtask (parallel when parallel_group allows). Choose a worktree name like "task-<id>" or similar; base branch defaults to main unless the user says otherwise.
+3) After all subtasks finish, call codex_merge_results (when available) to combine changes and clean up.
+4) Final reply to the user: merge summary/status and the list of touched files/subsystems. Do not invent code details.
 
-Allowed actions (all via run_repo_command):
-- In worktree "main": git fetch origin; git worktree add ../task-<name> origin/main
-- In a task worktree: git checkout -B <branch> origin/main; codex exec --full-auto "<task for Codex>"; run tests (pytest ..., npm test, yarn test, etc.)
-- Before merge: git diff to review; then git checkout main && git merge --no-ff <branch>
-
-Workflow: plan first, then create/update worktree, then call Codex with a clear subtask, then run tests, then prepare/merge. Log each step and command (with worktree) in the final output.
-For larger tasks, split work into parallel subtasks: create per-subtask worktrees named task-<slug> from origin/main, dispatch Codex/test commands per worktree in parallel (Promise.all), then serialize merges back into main after checks.
-When the user asks for specific worktree names, always create them explicitly using run_repo_command before proceeding.
-When the user gives explicit steps or commands (run_repo_command, codex exec, etc.), follow them verbatim before improvising.
+Constraints:
+- Never skip codex_plan_task on dev work.
+- Never return early without running the tools above.
+- Use run_repo_command only for basic git/shell helpers if absolutely necessary; prefer codex_* tools.
 `,
-  tools: [runRepoCommandTool, codexPlanTaskTool],
+  tools: [runRepoCommandTool, codexPlanTaskTool, codexRunSubtaskTool],
 });
 
 type RunImplementation = typeof run;
