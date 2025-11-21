@@ -21,7 +21,7 @@ const SubtaskInputSchema = z.object({
     id: z.string(),
     title: z.string(),
     description: z.string(),
-    parallel_group: z.string().optional(),
+    parallel_group: z.string().describe("Parallel group id (string, can be empty)."),
   }),
 });
 

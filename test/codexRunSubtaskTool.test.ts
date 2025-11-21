@@ -45,7 +45,7 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
         project_root: "repo",
         worktree_name: worktreeName,
         base_branch: "main",
-        subtask: { id: "s1", title: "Do it", description: "desc" },
+        subtask: { id: "s1", title: "Do it", description: "desc", parallel_group: "g1" },
       },
       { context: { baseDir } } as any,
     );
@@ -98,7 +98,7 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
         project_root: projectRoot,
         worktree_name: worktreeName,
         base_branch: "main",
-        subtask: { id: "s2", title: "Failing task", description: "desc" },
+        subtask: { id: "s2", title: "Failing task", description: "desc", parallel_group: "g2" },
       },
       { context: { baseDir } } as any,
     );
