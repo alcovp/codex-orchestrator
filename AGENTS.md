@@ -29,7 +29,7 @@
 - **Orchestrator Agent** (gpt-5.x, Agents SDK): не читает файлы и не принимает решений; только вызывает инструменты `run_repo_command`, `codex_plan_task`, `codex_run_subtask`, `codex_merge_results`, то есть запускает Codex CLI и прокидывает между прогонами JSON-артефакты.
 - **run_repo_command**: обёртка для команд внутри конкретного worktree; белый список команд и логирование в `run_repo_command.log`.
 - **Task Dispatcher** (`src/taskDispatcher.ts`): опрашивает источники задач и вызывает `runOrchestrator`.
-- **Контекст OrchestratorContext**: минимум `baseDir: string` — абсолютный путь к директории с worktree.
+- **Контекст OrchestratorContext**: минимум `repoRoot/baseDir: string` — абсолютный путь к рабочему репозиторию; `jobId`, `worktreesRoot` и `resultBranch` для размещения .codex/worktrees.
 - **Состояние**: отсутствует; между задачами ничего не запоминается, всё берётся из git-дерева.
 
 ## 3. Поведение Orchestrator Agent (тонкий слой)
@@ -55,14 +55,14 @@
 ### 3.2 codex_run_subtask
 
 - Вход: `{ project_root: string; worktree_name: string; subtask: { id: string; title: string; description: string; parallel_group?: string; } }`.
-- Действия: `git worktree add work3/${worktree_name} <base-branch>`, `cd work3/${worktree_name}`, запускает Codex с описанием подзадачи и требованиями минимизировать изменения и писать понятные коммиты.
-- Формат финального ответа Codex (JSON в конце): `{ "subtask_id": "{{subtask.id}}", "status": "ok" | "failed", "summary": string, "important_files": [ "path/file1.tsx", "..." ] }`.
+- Действия: создаёт worktree `.codex/jobs/<jobId>/worktrees/${worktree_name}` от базовой ветки (по умолчанию main), обеспечивает наличие result-ветки, запускает Codex с описанием подзадачи и требованием минимизировать изменения и писать понятные коммиты. У каждой подзадачи своя ветка.
+- Формат финального ответа Codex (JSON в конце): `{ "subtask_id": "{{subtask.id}}", "status": "ok" | "failed", "summary": string, "important_files": [ "path/file1.tsx", "..." ] }` (+ служебное поле `branch` добавляется инструментом для последующего merge).
 - Выход инструмента: парсится JSON с конца ответа и отдаётся наружу.
 
 ### 3.3 codex_merge_results
 
 - Вход: `{ project_root: string; base_branch: string; subtasks_results: { subtask_id: string; worktree_path: string; summary: string; }[] }`.
-- Действия: создаёт merge worktree `git worktree add work3/merge-final base_branch`, туда переносит изменения из worktree сабтасков (любой стратегией: cherry-pick/patch/cp+add), затем запускает Codex с JSON результатов.
+- Действия: создаёт result-worktree `.codex/jobs/<jobId>/worktrees/result` (ветка `result-<jobId>` от base_branch), туда переносит изменения из worktree сабтасков (любой стратегией: cherry-pick/patch/cp+add), затем запускает Codex с JSON результатов.
 - Формат ответа (строго JSON): `{ "status": "ok" | "needs_manual_review", "notes": string, "touched_files": [ "...", "..." ] }`.
 - Выход инструмента: финальный JSON-отчёт.
 
@@ -75,12 +75,12 @@
    - Оркестратор только парсит JSON, без доработок.
 
 2) **Codex Worker** (выполняет subtasks)  
-   - Каждая подзадача — отдельный worktree от `origin/main`.  
+   - Каждая подзадача — отдельный worktree в `.codex/jobs/<jobId>/worktrees/task-<slug>` от базовой ветки (по умолчанию main).  
    - Codex пишет код, запускает тесты, коммитит, оставляет JSON summary (ветка, коммиты, тесты, артефакты).  
    - Оркестратор следит за зависимостями, ждёт готовность зависимых задач и может гонять независимые параллельно.
 
 3) **Codex Merger** (последний прогон)  
-   - Сшивает ветки subtasks в основную ветку/worktree.  
+   - Сшивает ветки subtasks в общую result-ветку (`result-<jobId>`) в worktree `.codex/jobs/<jobId>/worktrees/result`.  
    - Разбирает конфликты, приводит формат/стиль, обновляет документацию, при необходимости гоняет быстрые проверки.  
    - Возвращает JSON-отчёт (merged branches, конфликты/решения, формат/тесты).
 
@@ -90,36 +90,40 @@
 
 ### Переменные окружения
 - `OPENAI_API_KEY` — ключ OpenAI (обязателен).
-- `ORCHESTRATOR_BASE_DIR` — абсолютный путь к директории с git worktree целевого проекта.
+- `ORCHESTRATOR_BASE_DIR` — абсолютный путь к рабочему репозиторию (без папки main/).
+- `ORCHESTRATOR_JOB_ID` — идентификатор текущей задачи (опционально, иначе генерируется).
 - Для Telegram-диспетчера (опционально): `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_ID`.
 
 ### Типичная структура
 ```
-/some/path/ORCHESTRATION_ROOT/
-  codex-orchestrator/    # этот репозиторий (Node/TS)
-  main/                  # worktree с веткой main
-  task-users-search/     # worktree под задачу
-  task-billing-optim/    # ещё один worktree
+/some/path/project-repo/        # работаем прямо здесь (main/worktree по умолчанию)
+  .codex/
+    jobs/
+      job-123/                  # jobId
+        worktrees/
+          task-alpha/           # worktree под сабтаск
+          task-beta/
+          result/               # общая result-ветка result-<jobId>
+  src/
+  package.json
+  ...
 ```
-В коде: `ORCHESTRATOR_BASE_DIR = /some/path/ORCHESTRATION_ROOT`.  
-Примеры `run_repo_command`:  
- `worktree="main"` → `/some/path/ORCHESTRATION_ROOT/main`  
- `worktree="task-users-search"` → `/some/path/ORCHESTRATION_ROOT/task-users-search`
+Все служебные worktree создаются и удаляются оркестратором внутри `.codex/jobs/<jobId>/worktrees`.
 
 ## 6. Правила работы с git
 
 ### Общие принципы
 - Работать только с локальными ветками и worktree.
-- Основание для новых задач — ветка main (если не указано иное).
+- Основание для новых задач — ветка main (если не указано иное); все временные worktree живут в `.codex/jobs/<jobId>/worktrees`.
 - Не трогать origin без явного письменного разрешения.
 - История должна быть аккуратной: осмысленные ветки и коммиты.
 
 ### Разрешённые операции (через run_repo_command)
 - Инфо: `git status`, `git log`, `git branch (-a)`, `git diff`.
-- Worktree (обычно в `main`): `git worktree list`, `git worktree add ../task-<имя> origin/main`, `git worktree remove <путь>` (только временные).
+- Worktree: `git worktree list`, `git worktree add <path-to-.codex/jobs/.../worktrees/task-...> -b <branch> <base>`, `git worktree remove <путь>` (только временные).
 - Ветки (внутри worktree): `git checkout/switch`, `git checkout -B <branch> origin/main`, `git branch -d <branch>` после мёрджа.
 - Локальные коммиты: `git add <...>`, `git commit -m "..."`
-- Локальные мёрджи (в `main`): `git merge --no-ff <branch>` или `git merge <branch>` без конфликтов.
+- Локальные мёрджи: `git merge --no-ff <branch>` или `git merge <branch>` без конфликтов (пуш не делаем).
 - Обновление main (по согласованию): `git fetch origin`; аккуратный `git pull --ff-only` или `git reset --hard origin/main` только если явно разрешено и нет незакоммиченных изменений.
 
 ### Условно разрешённые (крайняя необходимость)
@@ -140,10 +144,10 @@
 Пользователь: `yarn orchestrator "<большая задача>"`.
 
 Оркестратор (ничего не придумывает сам):
-- Запускает Codex Planner в worktree `main` → получает строгий JSON-план.
-- Создаёт/переиспользует worktree `task-<slug>` под каждую подзадачу. Проверяет зависимости; независимые subtasks запускает параллельно через Codex Worker, зависимые ждут готовности.
+- Запускает Codex Planner в корне репозитория → получает строгий JSON-план.
+- Создаёт/переиспользует worktree `.codex/jobs/<jobId>/worktrees/task-<slug>` под каждую подзадачу (от базовой ветки main). Проверяет зависимости; независимые subtasks запускает параллельно через Codex Worker, зависимые ждут готовности.
 - Собирает JSON summary от воркеров.
-- Запускает Codex Merger: мёржит ветки, решает конфликты, правит формат/доки, отдаёт итоговый отчёт.
+- Запускает Codex Merger: сшивает ветки сабтасков в общую result-ветку `result-<jobId>` (worktree `.codex/jobs/<jobId>/worktrees/result`), решает конфликты, правит формат/доки, отдаёт итоговый отчёт.
 - К финальному выводу прикладывает лог команд и краткое резюме стадий.
 
 ## 9. TODO и расширения

@@ -4,21 +4,28 @@ import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { OrchestratorContext } from "../orchestratorTypes.js";
+import {
+  buildOrchestratorContext,
+  DEFAULT_BASE_BRANCH,
+  resolveJobId,
+  type OrchestratorContext,
+} from "../orchestratorTypes.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
 const OUTPUT_TRUNCATE = 2000;
-const MERGE_WORKTREE_NAME = "merge-final";
 
 const MergeInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
+  job_id: z.string().optional().describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees."),
   base_branch: z.string().default("main"),
+  result_branch: z.string().optional().describe("Override for the result branch name."),
   subtasks_results: z
     .array(
       z.object({
         subtask_id: z.string(),
         worktree_path: z.string(),
+        branch: z.string().optional(),
         summary: z.string(),
       }),
     )
@@ -54,6 +61,7 @@ function resolveProjectRoot(projectRoot: string, runContext?: RunContext<Orchest
   if (path.isAbsolute(projectRoot)) return projectRoot;
 
   const baseDir =
+    runContext?.context?.repoRoot ??
     runContext?.context?.baseDir ??
     process.env.ORCHESTRATOR_BASE_DIR ??
     // fallback: current working directory if nothing else is set
@@ -92,19 +100,24 @@ function sanitizeBranchName(name: string, fallback: string): string {
   return cleaned || fallback;
 }
 
-function buildMergePrompt(subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string }>): string {
+function buildMergePrompt(
+  subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string; branch?: string }>,
+  targetBranch: string,
+  mergeWorktree: string,
+): string {
   const jsonPayload = JSON.stringify(subtasksResults, null, 2);
   return [
-    "Ты в merge-ветке, где собраны изменения из нескольких подзадач.",
+    `Ты в result-ветке ${targetBranch} (worktree: ${mergeWorktree}).`,
     "",
     "Вот JSON с результатами подзадач:",
     jsonPayload,
     "",
     "Твоя задача:",
-    "1. Проверить, что код собирается логически (по возможности).",
-    "2. Разрулить конфликты, привести стиль к единому виду.",
-    "3. Обновить документацию/README, если нужно.",
-    "4. В конце выдать JSON-отчет:",
+    "- Влить все ветки подзадач в эту result-ветку локально (push запрещен).",
+    "- Разрулить конфликты, привести стиль к единому виду.",
+    "- Обновить документацию/README, если нужно.",
+    "- Оставить итоговые коммиты в result-ветке.",
+    "- В конце выдать JSON-отчет:",
     "",
     "{",
     '  "status": "ok" | "needs_manual_review",',
@@ -159,32 +172,63 @@ function truncate(text: string, limit: number): string {
   return `${text.slice(0, limit)} ... [truncated ${text.length - limit} chars]`;
 }
 
+async function ensureResultBranch(
+  repoRoot: string,
+  resultBranch: string,
+  baseBranch: string,
+  exec: MergeExec,
+) {
+  try {
+    await exec({ program: "git", args: ["rev-parse", "--verify", resultBranch], cwd: repoRoot });
+    return;
+  } catch {
+    // fall through
+  }
+  await exec({
+    program: "git",
+    args: ["branch", resultBranch, baseBranch],
+    cwd: repoRoot,
+  });
+}
+
 export async function codexMergeResults(
   params: CodexMergeResultsInput,
   runContext?: RunContext<OrchestratorContext>,
 ): Promise<CodexMergeResultsResult> {
-  const projectRoot = resolveProjectRoot(params.project_root, runContext);
-  await ensureProjectRoot(projectRoot);
+  const repoRoot = resolveProjectRoot(params.project_root, runContext);
+  await ensureProjectRoot(repoRoot);
 
-  const mergeWorktree = path.resolve(projectRoot, "work3", MERGE_WORKTREE_NAME);
+  const resolvedJobId = resolveJobId(params.job_id ?? runContext?.context?.jobId);
+  const baseBranch = params.base_branch ?? runContext?.context?.baseBranch ?? DEFAULT_BASE_BRANCH;
+  const context = buildOrchestratorContext({
+    repoRoot,
+    jobId: resolvedJobId,
+    baseBranch,
+  });
+
+  const resultBranch = sanitizeBranchName(
+    params.result_branch ?? context.resultBranch,
+    context.resultBranch,
+  );
+  const mergeWorktree = path.resolve(context.resultWorktree);
   await ensureParentDir(mergeWorktree);
+  await ensureResultBranch(repoRoot, resultBranch, context.baseBranch, execImplementation);
 
   const exists = await pathExists(mergeWorktree);
   if (!exists) {
-    const branchName = sanitizeBranchName(MERGE_WORKTREE_NAME, `merge-${Date.now()}`);
     await execImplementation({
       program: "git",
-      args: ["worktree", "add", "-b", branchName, mergeWorktree, params.base_branch ?? "main"],
-      cwd: projectRoot,
+      args: ["worktree", "add", mergeWorktree, resultBranch],
+      cwd: repoRoot,
     });
   }
 
   const resolvedResults = params.subtasks_results.map((r) => ({
     ...r,
-    worktree_path: resolveWorktreePath(r.worktree_path, projectRoot),
+    worktree_path: resolveWorktreePath(r.worktree_path, repoRoot),
   }));
 
-  const prompt = buildMergePrompt(resolvedResults);
+  const prompt = buildMergePrompt(resolvedResults, resultBranch, mergeWorktree);
   let stdout = "";
   let stderr = "";
 

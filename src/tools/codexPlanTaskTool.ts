@@ -59,6 +59,7 @@ function resolveProjectRoot(projectRoot: string, runContext?: RunContext<Orchest
   }
 
   const baseDir =
+    runContext?.context?.repoRoot ??
     runContext?.context?.baseDir ??
     process.env.ORCHESTRATOR_BASE_DIR ??
     // fallback: current working directory if nothing else is set

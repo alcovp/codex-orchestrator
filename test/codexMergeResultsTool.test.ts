@@ -18,7 +18,9 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
   const projectRoot = path.join(baseDir, "repo");
   await mkdir(projectRoot, { recursive: true });
 
-  const mergeWorktree = path.join(projectRoot, "work3", "merge-final");
+  const jobId = "job-merge";
+  const mergeWorktree = path.join(projectRoot, ".codex", "jobs", jobId, "worktrees", "result");
+  const resultBranch = `result-${jobId}`;
   const sample: CodexMergeResultsResult = {
     status: "ok",
     notes: "merged",
@@ -30,7 +32,9 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
   setMergeExecImplementation(async ({ program, args, cwd }) => {
     calls.push({ program, args, cwd });
     if (program === "git") {
-      await mkdir(mergeWorktree, { recursive: true }); // simulate worktree creation
+      if (args[0] === "worktree") {
+        await mkdir(mergeWorktree, { recursive: true }); // simulate worktree creation
+      }
       return { stdout: "", stderr: "" };
     }
 
@@ -42,6 +46,7 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
       {
         project_root: "repo",
         base_branch: "main",
+        job_id: jobId,
         subtasks_results: [
           { subtask_id: "s1", worktree_path: "../task-1", summary: "done" },
           { subtask_id: "s2", worktree_path: path.join(baseDir, "task-2"), summary: "done" },
@@ -51,13 +56,14 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
     );
 
     assert.deepEqual(result, sample);
-    assert.equal(calls[0]?.program, "git");
-    assert.deepEqual(calls[0]?.args, ["worktree", "add", "-b", "merge-final", mergeWorktree, "main"]);
-    assert.equal(calls[0]?.cwd, projectRoot);
-    assert.equal(calls[1]?.program, "codex");
-    assert.equal(calls[1]?.cwd, mergeWorktree);
+    const worktreeAdd = calls.find((c) => c.program === "git" && c.args[0] === "worktree");
+    assert.ok(worktreeAdd);
+    assert.deepEqual(worktreeAdd?.args, ["worktree", "add", mergeWorktree, resultBranch]);
+    assert.equal(worktreeAdd?.cwd, projectRoot);
+    const codexCall = calls.find((c) => c.program === "codex");
+    assert.equal(codexCall?.cwd, mergeWorktree);
 
-    const prompt = calls[1]?.args?.join(" ") ?? "";
+    const prompt = codexCall?.args?.join(" ") ?? "";
     assert.match(prompt, /task-1/);
     assert.match(prompt, /task-2/);
   } finally {
@@ -68,7 +74,7 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
 test("codexMergeResults skips git when merge worktree exists and parses stderr JSON on failure", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-err-"));
   const projectRoot = path.join(baseDir, "repo");
-  const mergeWorktree = path.join(projectRoot, "work3", "merge-final");
+  const mergeWorktree = path.join(projectRoot, ".codex", "jobs", "job-existing", "worktrees", "result");
   await mkdir(mergeWorktree, { recursive: true });
 
   const sample: CodexMergeResultsResult = {
@@ -82,7 +88,7 @@ test("codexMergeResults skips git when merge worktree exists and parses stderr J
   setMergeExecImplementation(async ({ program, cwd }) => {
     calls.push({ program, cwd });
     if (program === "git") {
-      throw new Error("git should not be invoked when merge worktree exists");
+      return { stdout: "", stderr: "" };
     }
     const error: any = new Error("codex failed");
     error.stdout = "noise";
@@ -94,15 +100,16 @@ test("codexMergeResults skips git when merge worktree exists and parses stderr J
     const result = await codexMergeResults(
       {
         project_root: projectRoot,
+        job_id: "job-existing",
         subtasks_results: [{ subtask_id: "s1", worktree_path: mergeWorktree, summary: "done" }],
       },
       { context: { baseDir } } as any,
     );
 
     assert.deepEqual(result, sample);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.program, "codex");
-    assert.equal(calls[0]?.cwd, mergeWorktree);
+    assert.ok(calls.some((c) => c.program === "git"));
+    const codexCall = calls.find((c) => c.program === "codex");
+    assert.equal(codexCall?.cwd, mergeWorktree);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

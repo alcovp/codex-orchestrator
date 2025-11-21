@@ -112,9 +112,10 @@ export async function runRepoCommand(
   runContext?: RunContext<OrchestratorContext>,
 ) {
   const baseDir =
+    runContext?.context?.repoRoot ??
     runContext?.context?.baseDir ??
     process.env.ORCHESTRATOR_BASE_DIR ??
-    path.resolve(process.cwd(), "..");
+    process.cwd();
 
   const cwd = path.resolve(baseDir, worktree);
   const traceEnabled = isTruthyEnv("ORCHESTRATOR_TRACE");
@@ -202,7 +203,7 @@ export const runRepoCommandTool = tool({
     worktree: z
       .string()
       .describe(
-        'Directory name of the git worktree under baseDir, e.g. "main" or "task-users-search".',
+        'Directory path (relative to repo root) of the git worktree, e.g. ".", ".codex/jobs/<jobId>/worktrees/task-foo".',
       ),
     command: z
       .string()

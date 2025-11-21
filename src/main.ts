@@ -29,10 +29,10 @@ main();
 /*
 Before running, set:
 - OPENAI_API_KEY: your OpenAI key
-- ORCHESTRATOR_BASE_DIR: absolute path to the directory containing worktrees (main, task-...)
+- ORCHESTRATOR_BASE_DIR: absolute path to the repository root (worktrees go to .codex/jobs/<jobId>/worktrees)
 
 Example:
 export OPENAI_API_KEY="sk-..."
-export ORCHESTRATOR_BASE_DIR="/path/to/your/worktrees"
+export ORCHESTRATOR_BASE_DIR="/path/to/your/repo"
 yarn orchestrator "Refactor billing module and add tests"
 */

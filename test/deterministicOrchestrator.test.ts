@@ -25,8 +25,9 @@ after(() => {
 
 test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "orchestrator-deterministic-"));
-  const mainDir = path.join(baseDir, "main");
-  await mkdir(mainDir, { recursive: true });
+  const repoRoot = path.join(baseDir, "repo");
+  await mkdir(repoRoot, { recursive: true });
+  const jobId = "job-deterministic";
 
   const plan: CodexPlanTaskResult = {
     can_parallelize: true,
@@ -46,7 +47,9 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
 
   setSubtaskExecImplementation(async ({ program, args, cwd }) => {
     if (program === "git") {
-      subtaskEvents.push(`git:${args[2]}`);
+      if (args[0] === "worktree") {
+        subtaskEvents.push(`git:${args[3]}`);
+      }
       return { stdout: "", stderr: "" };
     }
 
@@ -76,7 +79,11 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
   const mergeCalls: Array<{ args: string[]; cwd: string }> = [];
   setMergeExecImplementation(async ({ program, args, cwd }) => {
     if (program === "git") {
-      await mkdir(path.join(mainDir, "work3", "merge-final"), { recursive: true });
+      if (args[0] === "worktree") {
+        await mkdir(path.join(repoRoot, ".codex", "jobs", jobId, "worktrees", "result"), {
+          recursive: true,
+        });
+      }
       return { stdout: "", stderr: "" };
     }
     mergeCalls.push({ args, cwd });
@@ -91,7 +98,8 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
   try {
     const result = await runDeterministicOrchestrator({
       userTask: "Ship feature",
-      baseDir,
+      repoRoot,
+      jobId,
     });
 
     // Plan captured
@@ -102,7 +110,7 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
 
     // Merge invoked once with merge worktree cwd
     assert.equal(mergeCalls.length, 1);
-    assert.ok(mergeCalls[0].cwd.endsWith(path.join("work3", "merge-final")));
+    assert.ok(mergeCalls[0].cwd.endsWith(path.join(".codex", "jobs", jobId, "worktrees", "result")));
     assert.equal(mergeCalls[0].args[0], "exec");
     assert.equal(mergeCalls[0].args[1], "--full-auto");
 

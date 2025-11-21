@@ -18,22 +18,28 @@ yarn install
 ## Окружение
 Задайте переменные перед запуском:
 - `OPENAI_API_KEY` — ключ OpenAI.
-- `ORCHESTRATOR_BASE_DIR` — абсолютный путь к каталогу, где лежат git worktree целевого проекта.
+- `ORCHESTRATOR_BASE_DIR` — абсолютный путь к рабочему репозиторию (без отдельной папки main).
+- `ORCHESTRATOR_JOB_ID` — опционально, идентификатор задачи (по умолчанию генерируется).
 - Можно положить их в `.env` в корне — `yarn orchestrator` и `yarn dispatcher` подхватывают файл автоматически.
 
-Пример структуры worktree:
+Пример структуры worktree (создаётся автоматически):
 ```
-/some/path/ORCHESTRATION_ROOT/
-  codex-orchestrator/    # этот репозиторий
-  main/                  # основная ветка проекта
-  task-foo/              # рабочие деревья задач
-  task-bar/
+/some/path/project-repo/        # этот репозиторий
+  .codex/
+    jobs/
+      job-123/
+        worktrees/
+          task-foo/             # worktree под сабтаск
+          task-bar/
+          result/               # общая result-ветка result-job-123
+  src/
+  package.json
 ```
 
 ## Быстрый старт
 ```bash
 export OPENAI_API_KEY="sk-..."
-export ORCHESTRATOR_BASE_DIR="/some/path/ORCHESTRATION_ROOT"
+export ORCHESTRATOR_BASE_DIR="/some/path/project-repo"
 
 yarn orchestrator "Refactor billing module and add tests"
 ```
@@ -43,7 +49,7 @@ yarn orchestrator "Refactor billing module and add tests"
 ## Что делает оркестратор
 - Агент **Codex Orchestrator** (в `src/orchestratorAgent.ts`) использует инструменты для безопасного запуска команд в worktree.
 - Основной инструмент — `run_repo_command` (в `src/tools/runRepoCommandTool.ts`), который:
-  - вычисляет `cwd = <ORCHESTRATOR_BASE_DIR>/<worktree>`;
+  - вычисляет `cwd = <ORCHESTRATOR_BASE_DIR>/<worktree>` (например, `.` или `.codex/jobs/<jobId>/worktrees/task-foo`);
   - проверяет, что директория существует;
   - разрешает только безопасные префиксы команд (git, codex, ls, pwd, cat, npm, yarn, pnpm, pytest, node);
   - блокирует опасные git-операции: push, remote, reset, rebase;

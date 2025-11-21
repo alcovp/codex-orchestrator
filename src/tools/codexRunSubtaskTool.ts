@@ -4,7 +4,12 @@ import { access, mkdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
-import type { OrchestratorContext } from "../orchestratorTypes.js";
+import {
+  buildOrchestratorContext,
+  DEFAULT_BASE_BRANCH,
+  resolveJobId,
+  type OrchestratorContext,
+} from "../orchestratorTypes.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
@@ -12,7 +17,8 @@ const OUTPUT_TRUNCATE = 2000;
 
 const SubtaskInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
-  worktree_name: z.string().describe("Name for the worktree under project_root/work3/."),
+  worktree_name: z.string().describe("Name for the worktree under .codex/jobs/<jobId>/worktrees/."),
+  job_id: z.string().optional().describe("Job id to place worktrees under .codex/jobs/<jobId>."),
   base_branch: z
     .string()
     .describe("Base branch/ref for git worktree add (e.g., main, HEAD, origin/main).")
@@ -29,6 +35,7 @@ const SubtaskOutputSchema = z.object({
   subtask_id: z.string(),
   status: z.enum(["ok", "failed"]),
   summary: z.string(),
+  branch: z.string().optional(),
   important_files: z.array(z.string()),
 });
 
@@ -55,6 +62,7 @@ function resolveProjectRoot(projectRoot: string, runContext?: RunContext<Orchest
   if (path.isAbsolute(projectRoot)) return projectRoot;
 
   const baseDir =
+    runContext?.context?.repoRoot ??
     runContext?.context?.baseDir ??
     process.env.ORCHESTRATOR_BASE_DIR ??
     // fallback: current working directory if nothing else is set
@@ -112,6 +120,36 @@ function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"]): string {
   ].join("\n");
 }
 
+async function ensureResultBranch(
+  repoRoot: string,
+  branch: string,
+  baseBranch: string,
+  exec: SubtaskExec,
+) {
+  try {
+    await exec({ program: "git", args: ["rev-parse", "--verify", branch], cwd: repoRoot });
+    return;
+  } catch {
+    // branch is missing, fall through to create it
+  }
+
+  await exec({ program: "git", args: ["branch", branch, baseBranch], cwd: repoRoot });
+}
+
+async function detectCurrentBranch(worktreeDir: string, exec: SubtaskExec): Promise<string | null> {
+  try {
+    const { stdout } = await exec({
+      program: "git",
+      args: ["rev-parse", "--abbrev-ref", "HEAD"],
+      cwd: worktreeDir,
+    });
+    const branch = stdout?.trim();
+    return branch ? branch.split("\n")[0]?.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
 function tryParseJson(text: string): unknown | null {
   try {
     return JSON.parse(text);
@@ -160,20 +198,38 @@ export async function codexRunSubtask(
   params: CodexRunSubtaskInput,
   runContext?: RunContext<OrchestratorContext>,
 ): Promise<CodexRunSubtaskResult> {
-  const projectRoot = resolveProjectRoot(params.project_root, runContext);
-  await ensureProjectRoot(projectRoot);
+  const repoRoot = resolveProjectRoot(params.project_root, runContext);
+  await ensureProjectRoot(repoRoot);
 
-  const worktreeDir = path.resolve(projectRoot, "work3", params.worktree_name);
+  const resolvedJobId = resolveJobId(params.job_id ?? runContext?.context?.jobId);
+  const baseBranch = params.base_branch ?? runContext?.context?.baseBranch ?? DEFAULT_BASE_BRANCH;
+  const context = buildOrchestratorContext({
+    repoRoot,
+    jobId: resolvedJobId,
+    baseBranch,
+  });
+
+  await ensureParentDir(context.worktreesRoot);
+  await ensureResultBranch(context.repoRoot, context.resultBranch, context.baseBranch, execImplementation);
+
+  const worktreeDir = path.resolve(context.worktreesRoot, params.worktree_name);
   await ensureParentDir(worktreeDir);
+
+  let branchName = sanitizeBranchName(
+    `task-${params.worktree_name}-${context.jobId}`,
+    `task-${Date.now()}`,
+  );
 
   const exists = await pathExists(worktreeDir);
   if (!exists) {
-    const branchName = sanitizeBranchName(params.worktree_name, `wt-${Date.now()}`);
     await execImplementation({
       program: "git",
-      args: ["worktree", "add", "-b", branchName, worktreeDir, params.base_branch ?? "main"],
-      cwd: projectRoot,
+      args: ["worktree", "add", "-b", branchName, worktreeDir, baseBranch],
+      cwd: repoRoot,
     });
+  } else {
+    const current = await detectCurrentBranch(worktreeDir, execImplementation);
+    branchName = current || branchName;
   }
 
   const prompt = buildSubtaskPrompt(params.subtask);
@@ -188,12 +244,20 @@ export async function codexRunSubtask(
     });
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
-    return normalizeOutput(extractLastJsonObject(stdout || stderr));
+    const parsed = normalizeOutput(extractLastJsonObject(stdout || stderr));
+    return {
+      ...parsed,
+      branch: parsed.branch || branchName || undefined,
+    };
   } catch (error: any) {
     stdout = (error?.stdout ?? stdout ?? "") as string;
     stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string;
     try {
-      return normalizeOutput(extractLastJsonObject(`${stdout}\n${stderr}`));
+      const parsed = normalizeOutput(extractLastJsonObject(`${stdout}\n${stderr}`));
+      return {
+        ...parsed,
+        branch: parsed.branch || branchName || undefined,
+      };
     } catch {
       const parts = [
         "codex_run_subtask failed: could not parse final JSON.",

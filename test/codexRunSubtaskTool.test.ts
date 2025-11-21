@@ -18,14 +18,16 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
   const projectRoot = path.join(baseDir, "repo");
   await mkdir(projectRoot, { recursive: true });
 
+  const jobId = "job-test";
   const worktreeName = "wt-alpha";
-  const worktreeDir = path.join(projectRoot, "work3", worktreeName);
+  const worktreeDir = path.join(projectRoot, ".codex", "jobs", jobId, "worktrees", worktreeName);
 
   const sample: CodexRunSubtaskResult = {
     subtask_id: "s1",
     status: "ok",
     summary: "done",
     important_files: ["file.txt"],
+    branch: `task-${worktreeName}-${jobId}`,
   };
 
   const calls: Array<{ program: string; args: string[]; cwd: string }> = [];
@@ -33,7 +35,9 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
   setSubtaskExecImplementation(async ({ program, args, cwd }) => {
     calls.push({ program, args, cwd });
     if (program === "git") {
-      await mkdir(worktreeDir, { recursive: true }); // simulate git worktree add
+      if (args[0] === "worktree") {
+        await mkdir(worktreeDir, { recursive: true }); // simulate git worktree add
+      }
       return { stdout: "", stderr: "" };
     }
     return { stdout: `notes\n${JSON.stringify(sample)}`, stderr: "" };
@@ -44,6 +48,7 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
       {
         project_root: "repo",
         worktree_name: worktreeName,
+        job_id: jobId,
         base_branch: "main",
         subtask: { id: "s1", title: "Do it", description: "desc", parallel_group: "g1" },
       },
@@ -51,11 +56,19 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
     );
 
     assert.deepEqual(result, sample);
-    assert.equal(calls[0]?.program, "git");
-    assert.deepEqual(calls[0]?.args, ["worktree", "add", "-b", "wt-alpha", worktreeDir, "main"]);
-    assert.equal(calls[0]?.cwd, projectRoot);
-    assert.equal(calls[1]?.program, "codex");
-    assert.equal(calls[1]?.cwd, worktreeDir);
+    const worktreeAdd = calls.find((c) => c.program === "git" && c.args[0] === "worktree");
+    assert.ok(worktreeAdd);
+    assert.deepEqual(worktreeAdd?.args, [
+      "worktree",
+      "add",
+      "-b",
+      sample.branch,
+      worktreeDir,
+      "main",
+    ]);
+    assert.equal(worktreeAdd?.cwd, projectRoot);
+    const codexCall = calls.find((c) => c.program === "codex");
+    assert.equal(codexCall?.cwd, worktreeDir);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }
@@ -65,7 +78,7 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-subtask-err-"));
   const projectRoot = path.join(baseDir, "repo");
   const worktreeName = "wt-beta";
-  const worktreeDir = path.join(projectRoot, "work3", worktreeName);
+  const worktreeDir = path.join(projectRoot, ".codex", "jobs", "job-existing", "worktrees", worktreeName);
 
   await mkdir(worktreeDir, { recursive: true });
 
@@ -74,21 +87,24 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
     status: "failed",
     summary: "boom",
     important_files: [],
+    branch: "existing-branch",
   };
 
-  const calls: Array<{ program: string }> = [];
+  const calls: Array<{ program: string; cwd?: string; args?: string[] }> = [];
 
-  setSubtaskExecImplementation(async ({ program, cwd }) => {
-    calls.push({ program });
-    assert.equal(cwd, worktreeDir);
+  setSubtaskExecImplementation(async ({ program, cwd, args }) => {
+    calls.push({ program, cwd, args });
 
     if (program === "git") {
-      throw new Error("git should not be invoked when worktree already exists");
+      if (args?.[0] === "rev-parse" && cwd === worktreeDir) {
+        return { stdout: `${sample.branch}\n`, stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
     }
 
     const error: any = new Error("codex failed");
     error.stdout = "ignored";
-    error.stderr = `info\n${JSON.stringify(sample)}`;
+    error.stderr = `info\n${JSON.stringify({ ...sample, branch: undefined })}`;
     throw error;
   });
 
@@ -97,6 +113,7 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
       {
         project_root: projectRoot,
         worktree_name: worktreeName,
+        job_id: "job-existing",
         base_branch: "main",
         subtask: { id: "s2", title: "Failing task", description: "desc", parallel_group: "g2" },
       },
@@ -104,8 +121,9 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
     );
 
     assert.deepEqual(result, sample);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.program, "codex");
+    assert.ok(calls.some((c) => c.program === "git"));
+    const codexCall = calls.find((c) => c.program === "codex");
+    assert.equal(codexCall?.cwd, worktreeDir);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

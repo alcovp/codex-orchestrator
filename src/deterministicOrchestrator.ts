@@ -12,7 +12,10 @@ import {
   codexMergeResults,
   type CodexMergeResultsResult,
 } from "./tools/codexMergeResultsTool.js";
-import type { OrchestratorContext } from "./orchestratorTypes.js";
+import {
+  buildOrchestratorContext,
+  type OrchestratorContext,
+} from "./orchestratorTypes.js";
 
 type SubtaskPlan = CodexPlanTaskResult["subtasks"][number];
 
@@ -20,7 +23,9 @@ export interface DeterministicOrchestratorOptions {
   userTask: string;
   baseDir?: string;
   projectRoot?: string;
+  repoRoot?: string;
   baseBranch?: string;
+  jobId?: string;
 }
 
 export interface SubtaskRunOutput {
@@ -53,6 +58,7 @@ export function formatDeterministicReport(result: DeterministicOrchestratorResul
   const mergeInput = result.subtaskResults.map((r) => ({
     subtask_id: r.subtask.id,
     worktree_path: r.worktreePath,
+    branch: r.result.branch,
     summary: r.result.summary,
   }));
 
@@ -70,16 +76,6 @@ export function formatDeterministicReport(result: DeterministicOrchestratorResul
   );
 
   return lines.join("\n");
-}
-
-function resolveBaseDir(baseDir?: string): string {
-  return baseDir ?? process.env.ORCHESTRATOR_BASE_DIR ?? path.resolve(process.cwd(), "..");
-}
-
-function resolveProjectRoot(baseDir: string, projectRoot?: string): string {
-  if (!projectRoot) return path.resolve(baseDir, "main");
-  if (path.isAbsolute(projectRoot)) return projectRoot;
-  return path.resolve(baseDir, projectRoot);
 }
 
 async function ensureDirExists(directory: string) {
@@ -130,17 +126,18 @@ function buildBatches(plan: CodexPlanTaskResult): SubtaskPlan[][] {
 export async function runDeterministicOrchestrator(
   options: DeterministicOrchestratorOptions,
 ): Promise<DeterministicOrchestratorResult> {
-  const baseDir = resolveBaseDir(options.baseDir);
-  const projectRoot = resolveProjectRoot(baseDir, options.projectRoot);
-  const baseBranch = options.baseBranch ?? "main";
+  const context = buildOrchestratorContext({
+    repoRoot: options.repoRoot ?? options.projectRoot ?? options.baseDir,
+    baseBranch: options.baseBranch,
+    jobId: options.jobId,
+  });
+  const projectRoot = context.repoRoot;
 
   await ensureDirExists(projectRoot);
 
-  const runContext: OrchestratorContext = { baseDir };
-
   const plan = await codexPlanTask(
     { project_root: projectRoot, user_task: options.userTask },
-    { context: runContext } as any,
+    { context } as any,
   );
 
   const batches = buildBatches(plan);
@@ -152,16 +149,17 @@ export async function runDeterministicOrchestrator(
     const batchPromises = batch.map(async (subtask, idxInBatch) => {
       const seq = subtaskSeq++;
       const worktreeName = makeWorktreeName(subtask, seq, takenNames);
-      const worktreePath = path.resolve(projectRoot, "work3", worktreeName);
+      const worktreePath = path.resolve(context.worktreesRoot, worktreeName);
 
       const result = await codexRunSubtask(
         {
           project_root: projectRoot,
           worktree_name: worktreeName,
-          base_branch: baseBranch,
+          job_id: context.jobId,
+          base_branch: context.baseBranch,
           subtask,
         },
-        { context: runContext } as any,
+        { context } as any,
       );
 
       subtaskResults.push({ subtask, worktreePath, result });
@@ -173,14 +171,17 @@ export async function runDeterministicOrchestrator(
   const mergeResult = await codexMergeResults(
     {
       project_root: projectRoot,
-      base_branch: baseBranch,
+      job_id: context.jobId,
+      base_branch: context.baseBranch,
+      result_branch: context.resultBranch,
       subtasks_results: subtaskResults.map((r) => ({
         subtask_id: r.subtask.id,
         worktree_path: r.worktreePath,
+        branch: r.result.branch,
         summary: r.result.summary,
       })),
     },
-    { context: runContext } as any,
+    { context } as any,
   );
 
   return { plan, subtaskResults, mergeResult };
