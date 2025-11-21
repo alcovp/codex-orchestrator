@@ -67,6 +67,7 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
       status: "ok",
       summary: `done-${id}`,
       important_files: [`${id}.txt`],
+      branch: `task-${id}`,
     };
 
     if (id === "alpha" || id === "beta") {

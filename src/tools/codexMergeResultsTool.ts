@@ -25,7 +25,7 @@ const MergeInputSchema = z.object({
       z.object({
         subtask_id: z.string(),
         worktree_path: z.string(),
-        branch: z.string().optional(),
+        branch: z.string(),
         summary: z.string(),
       }),
     )
@@ -101,7 +101,7 @@ function sanitizeBranchName(name: string, fallback: string): string {
 }
 
 function buildMergePrompt(
-  subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string; branch?: string }>,
+  subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string; branch: string }>,
   targetBranch: string,
   mergeWorktree: string,
 ): string {

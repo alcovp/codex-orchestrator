@@ -48,8 +48,8 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
         base_branch: "main",
         job_id: jobId,
         subtasks_results: [
-          { subtask_id: "s1", worktree_path: "../task-1", summary: "done" },
-          { subtask_id: "s2", worktree_path: path.join(baseDir, "task-2"), summary: "done" },
+          { subtask_id: "s1", worktree_path: "../task-1", branch: "task-1", summary: "done" },
+          { subtask_id: "s2", worktree_path: path.join(baseDir, "task-2"), branch: "task-2", summary: "done" },
         ],
       },
       { context: { baseDir } } as any,
@@ -101,7 +101,7 @@ test("codexMergeResults skips git when merge worktree exists and parses stderr J
       {
         project_root: projectRoot,
         job_id: "job-existing",
-        subtasks_results: [{ subtask_id: "s1", worktree_path: mergeWorktree, summary: "done" }],
+        subtasks_results: [{ subtask_id: "s1", worktree_path: mergeWorktree, branch: "task-s1", summary: "done" }],
       },
       { context: { baseDir } } as any,
     );
