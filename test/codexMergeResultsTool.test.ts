@@ -47,6 +47,7 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
         project_root: "repo",
         base_branch: "main",
         job_id: jobId,
+        result_branch: resultBranch,
         subtasks_results: [
           { subtask_id: "s1", worktree_path: "../task-1", branch: "task-1", summary: "done" },
           { subtask_id: "s2", worktree_path: path.join(baseDir, "task-2"), branch: "task-2", summary: "done" },
@@ -75,6 +76,7 @@ test("codexMergeResults skips git when merge worktree exists and parses stderr J
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-err-"));
   const projectRoot = path.join(baseDir, "repo");
   const mergeWorktree = path.join(projectRoot, ".codex", "jobs", "job-existing", "worktrees", "result");
+  const resultBranch = "result-job-existing";
   await mkdir(mergeWorktree, { recursive: true });
 
   const sample: CodexMergeResultsResult = {
@@ -101,6 +103,7 @@ test("codexMergeResults skips git when merge worktree exists and parses stderr J
       {
         project_root: projectRoot,
         job_id: "job-existing",
+        result_branch: resultBranch,
         subtasks_results: [{ subtask_id: "s1", worktree_path: mergeWorktree, branch: "task-s1", summary: "done" }],
       },
       { context: { baseDir } } as any,

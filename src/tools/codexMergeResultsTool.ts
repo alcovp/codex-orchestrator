@@ -19,7 +19,7 @@ const MergeInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
   job_id: z.string().describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees."),
   base_branch: z.string().default("main"),
-  result_branch: z.string().optional().describe("Override for the result branch name."),
+  result_branch: z.string().describe("Result branch name (e.g., result-<jobId>)."),
   subtasks_results: z
     .array(
       z.object({
@@ -206,10 +206,7 @@ export async function codexMergeResults(
     baseBranch,
   });
 
-  const resultBranch = sanitizeBranchName(
-    params.result_branch ?? context.resultBranch,
-    context.resultBranch,
-  );
+  const resultBranch = sanitizeBranchName(params.result_branch, context.resultBranch);
   const mergeWorktree = path.resolve(context.resultWorktree);
   await ensureParentDir(mergeWorktree);
   await ensureResultBranch(repoRoot, resultBranch, context.baseBranch, execImplementation);
