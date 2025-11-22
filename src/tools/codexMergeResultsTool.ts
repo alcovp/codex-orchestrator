@@ -301,6 +301,12 @@ async function mergeBranchIntoResult(
 
   if (conflicts.length > 0) {
     await resolveConflictsWithCodex({ branch, conflictFiles: conflicts, cwd: mergeWorktree, exec });
+    const addResult = await runGit(["add", "-A"], mergeWorktree, exec, true);
+    if (addResult.code !== 0) {
+      throw new Error(
+        `git add failed after Codex conflict resolution for branch "${branch}": ${addResult.stderr || addResult.stdout}`,
+      );
+    }
     const remaining = await getUnmergedFiles(mergeWorktree, exec);
     if (remaining.length > 0) {
       throw new Error(
