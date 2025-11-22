@@ -310,12 +310,18 @@ async function mergeBranchIntoResult(
     conflicts = remaining;
   }
 
-  await runGit(["add", "-A"], mergeWorktree, exec);
-  const message =
-    !hadConflicts
-      ? `Merge branch ${branch} into ${resultBranch}`
-      : `Merge branch ${branch} (conflicts resolved via Codex)`;
-  await runGit(["commit", "-m", message], mergeWorktree, exec);
+  const status = await runGit(["status", "--porcelain"], mergeWorktree, exec, true);
+  if (status.stdout.trim()) {
+    await runGit(["add", "-A"], mergeWorktree, exec);
+    const message =
+      !hadConflicts
+        ? `Merge branch ${branch} into ${resultBranch}`
+        : `Merge branch ${branch} (conflicts resolved via Codex)`;
+    const commitResult = await runGit(["commit", "-m", message], mergeWorktree, exec, true);
+    if (commitResult.code !== 0 && !commitResult.stderr.includes("nothing to commit")) {
+      throw new Error(`git commit failed while merging ${branch}: ${commitResult.stderr || commitResult.stdout}`);
+    }
+  }
 
   return { branch, conflicts: hadConflicts ? conflicts : [] };
 }

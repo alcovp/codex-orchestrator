@@ -215,6 +215,62 @@ function truncate(text: string, limit: number): string {
   return `${text.slice(0, limit)} ... [truncated ${text.length - limit} chars]`;
 }
 
+async function runGit(
+  args: string[],
+  cwd: string,
+  exec: SubtaskExec,
+  allowNonZero = false,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  try {
+    const { stdout, stderr } = await exec({ program: "git", args, cwd });
+    return { stdout: stdout ?? "", stderr: stderr ?? "", code: 0 };
+  } catch (error: any) {
+    const code = typeof error?.code === "number" ? error.code : 1;
+    if (allowNonZero) {
+      return {
+        stdout: error?.stdout ?? "",
+        stderr: error?.stderr ?? error?.message ?? "",
+        code,
+      };
+    }
+    throw error;
+  }
+}
+
+async function commitIfNeeded({
+  cwd,
+  exec,
+  subtaskId,
+  jobId,
+  summary,
+}: {
+  cwd: string;
+  exec: SubtaskExec;
+  subtaskId: string;
+  jobId: string;
+  summary: string;
+}) {
+  const status = await runGit(["status", "--porcelain"], cwd, exec, true);
+  if (!status.stdout.trim()) {
+    return false;
+  }
+
+  await runGit(["add", "-A"], cwd, exec);
+  const message = `job ${jobId}: subtask ${subtaskId} – ${summary.slice(0, 120)}`;
+  const commitResult = await runGit(
+    ["-c", "user.name=Codex Orchestrator", "-c", "user.email=codex@example.invalid", "commit", "-m", message],
+    cwd,
+    exec,
+    true,
+  );
+
+  if (commitResult.code !== 0 && !commitResult.stderr.includes("nothing to commit")) {
+    throw new Error(`git commit failed for subtask ${subtaskId}: ${commitResult.stderr || commitResult.stdout}`);
+  }
+
+  return commitResult.code === 0;
+}
+
 export async function codexRunSubtask(
   params: CodexRunSubtaskInput,
   runContext?: RunContext<OrchestratorContext>,
@@ -270,6 +326,13 @@ export async function codexRunSubtask(
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
     const parsed = normalizeOutput(extractLastJsonObject(stdout || stderr));
+    await commitIfNeeded({
+      cwd: worktreeDir,
+      exec: execImplementation,
+      subtaskId: params.subtask.id,
+      jobId: context.jobId,
+      summary: parsed.summary,
+    });
     return {
       ...parsed,
       branch: parsed.branch || branchName || undefined,
@@ -279,6 +342,13 @@ export async function codexRunSubtask(
     stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string;
     try {
       const parsed = normalizeOutput(extractLastJsonObject(`${stdout}\n${stderr}`));
+      await commitIfNeeded({
+        cwd: worktreeDir,
+        exec: execImplementation,
+        subtaskId: params.subtask.id,
+        jobId: context.jobId,
+        summary: parsed.summary,
+      });
       return {
         ...parsed,
         branch: parsed.branch || branchName || undefined,
