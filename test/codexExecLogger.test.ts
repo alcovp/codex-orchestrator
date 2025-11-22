@@ -51,6 +51,53 @@ test("runWithCodexTee tees stdout/stderr while capturing output", async () => {
   }
 });
 
+test("runWithCodexTee prefixes tee output with timestamp and label", async () => {
+  const prevTee = process.env.ORCHESTRATOR_TEE_CODEX;
+  process.env.ORCHESTRATOR_TEE_CODEX = "1";
+
+  const originalStdout = process.stdout.write;
+  const originalStderr = process.stderr.write;
+  const seenOut: string[] = [];
+  const seenErr: string[] = [];
+
+  (process.stdout as any).write = ((chunk: any, encoding?: any, cb?: any) => {
+    seenOut.push(chunk.toString());
+    if (typeof encoding === "function") encoding();
+    if (typeof cb === "function") cb();
+    return true;
+  }) as typeof process.stdout.write;
+
+  (process.stderr as any).write = ((chunk: any, encoding?: any, cb?: any) => {
+    seenErr.push(chunk.toString());
+    if (typeof encoding === "function") encoding();
+    if (typeof cb === "function") cb();
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    await runWithCodexTee({
+      command: process.execPath,
+      args: ["-e", "console.log('hello'); console.error('oops');"],
+      cwd: process.cwd(),
+      label: "prefix-test",
+    });
+
+    const prefixPattern = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[prefix-test\]/;
+    assert.ok(
+      seenOut.some((line) => prefixPattern.test(line) && line.includes("hello")),
+      "stdout tee output should include timestamp and label",
+    );
+    assert.ok(
+      seenErr.some((line) => prefixPattern.test(line) && line.includes("oops")),
+      "stderr tee output should include timestamp and label",
+    );
+  } finally {
+    restoreEnv(prevTee);
+    (process.stdout as any).write = originalStdout;
+    (process.stderr as any).write = originalStderr;
+  }
+});
+
 test("runWithCodexTee keeps tail within captureLimit", async () => {
   const prevTee = process.env.ORCHESTRATOR_TEE_CODEX;
   process.env.ORCHESTRATOR_TEE_CODEX = "0"; // keep test output quiet
