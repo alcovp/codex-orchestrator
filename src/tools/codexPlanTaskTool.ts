@@ -17,6 +17,7 @@ const PlannerSubtaskSchema = z.object({
   title: z.string(),
   description: z.string(),
   parallel_group: z.string(),
+  context: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -30,6 +31,7 @@ export type CodexPlanTaskResult = {
   can_parallelize: boolean;
   subtasks: Array<
     z.infer<typeof PlannerSubtaskSchema> & {
+      context: string | null;
       notes: string | null;
     }
   >;
@@ -98,9 +100,12 @@ function buildPlannerPrompt(userTask: string): string {
     "",
     "Правила для плана:",
     "- Не добавляй отдельные подзадачи для анализа/исследования/QA/ручного прогона тестов, если пользователь явно не просит и задача не огромная. По умолчанию такие этапы пропусти.",
+    "- Разбивай только когда есть явное разделение по технологиям/подсистемам (разные библиотеки/стэки) или объём реально велик для одного Codex-прогона. Если задача маленькая/средняя — держи 1-2 подзадачи максимум.",
     "- Каждая подзадача должна напрямую приближать к выполнению запроса пользователя, без дублирования общей формулировки.",
     "- Описание подзадачи делай самодостаточным: 2-4 предложения с конкретными действиями, целевыми файлами/модулями (если понятны) и критериями готовности. Не ограничивайся короткими намеками.",
-    "- В описании сохраняй связь с исходным запросом, чтобы не терять контекст, но чётко указывай, что поручено именно этой подзадаче.",
+    '- Первое предложение описания явно должно ссылаться на исходный запрос (например, "В контексте запроса <цитата пользователя> сделать ...").',
+    "- В описании сохраняй связь с исходным запросом, но чётко указывай, что поручено именно этой подзадаче.",
+    "- В каждую подзадачу добавь поле context с исходным запросом пользователя (для понимания), даже если описание уже его упоминает.",
     "",
     "Формат ответа — ВАЛИДНЫЙ JSON по схеме:",
     "",
@@ -112,6 +117,7 @@ function buildPlannerPrompt(userTask: string): string {
     '      "title": "string",',
     '      "description": "string",',
     '      "parallel_group": "string",',
+    '      "context": "string | null",',
     '      "notes": "string | null"',
     "    }",
     "  ]",
@@ -162,6 +168,7 @@ function normalizeOutput(raw: unknown): CodexPlanTaskResult {
     can_parallelize: parsed.can_parallelize,
     subtasks: parsed.subtasks.map((subtask) => ({
       ...subtask,
+      context: subtask.context ?? null,
       notes: subtask.notes ?? null,
     })),
   };

@@ -31,9 +31,30 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
   const plan: CodexPlanTaskResult = {
     can_parallelize: true,
     subtasks: [
-      { id: "alpha", title: "A", description: "do A", parallel_group: "g1", notes: null },
-      { id: "beta", title: "B", description: "do B", parallel_group: "g1", notes: null },
-      { id: "gamma", title: "C", description: "do C", parallel_group: "g2", notes: null },
+      {
+        id: "alpha",
+        title: "A",
+        description: "do A",
+        parallel_group: "g1",
+        context: "Ship feature",
+        notes: null,
+      },
+      {
+        id: "beta",
+        title: "B",
+        description: "do B",
+        parallel_group: "g1",
+        context: "Ship feature",
+        notes: null,
+      },
+      {
+        id: "gamma",
+        title: "C",
+        description: "do C",
+        parallel_group: "g2",
+        context: "Ship feature",
+        notes: null,
+      },
     ],
   };
 

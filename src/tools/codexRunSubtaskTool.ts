@@ -39,6 +39,7 @@ const SubtaskInputSchema = z.object({
     title: z.string(),
     description: z.string(),
     parallel_group: z.string().describe("Parallel group id (string, can be empty).").optional().nullable(),
+    context: z.string().optional().nullable(),
     notes: z.string().optional().nullable(),
   }),
 });
@@ -122,10 +123,11 @@ function sanitizeBranchName(name: string, fallback: string): string {
 }
 
 function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"], userTask: string): string {
-  const userTaskSection = userTask
+  const contextBlock = subtask.context || userTask;
+  const userTaskSection = contextBlock
     ? [
-        "Исходная задача пользователя (контекст, не перепоручай заново, просто держи в уме):",
-        userTask,
+        "Исходная задача пользователя (только для контекста, не перепоручай заново):",
+        contextBlock,
         "",
       ]
     : [];
@@ -328,7 +330,8 @@ export async function codexRunSubtask(
     branchName = current || branchName;
   }
 
-  const userTaskContextRaw = params.user_task ?? runContext?.context?.taskDescription ?? "";
+  const userTaskContextRaw =
+    params.subtask.context ?? params.user_task ?? runContext?.context?.taskDescription ?? "";
   const userTaskContext = typeof userTaskContextRaw === "string" ? userTaskContextRaw.trim() : "";
   const prompt = buildSubtaskPrompt(params.subtask, userTaskContext);
   let stdout = "";
