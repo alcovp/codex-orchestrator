@@ -6,7 +6,6 @@ import { after, test } from "node:test";
 import {
   codexMergeResults,
   setMergeExecImplementation,
-  type CodexMergeResultsResult,
 } from "../src/tools/codexMergeResultsTool.js";
 import { buildOrchestratorContext } from "../src/orchestratorTypes.js";
 
@@ -14,7 +13,7 @@ after(() => {
   setMergeExecImplementation(null);
 });
 
-test("codexMergeResults adds merge worktree, resolves paths, and parses stdout JSON", async () => {
+test("codexMergeResults adds merge worktree, merges branches, and returns summary", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-"));
   const projectRoot = path.join(baseDir, "repo");
   await mkdir(projectRoot, { recursive: true });
@@ -22,24 +21,43 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
   const jobId = "job-merge";
   const mergeWorktree = path.join(projectRoot, ".codex", "jobs", jobId, "worktrees", "result");
   const resultBranch = `result-${jobId}`;
-  const sample: CodexMergeResultsResult = {
-    status: "ok",
-    notes: "merged",
-    touched_files: ["a.txt", "b.txt"],
-  };
 
   const calls: Array<{ program: string; args: string[]; cwd: string }> = [];
 
   setMergeExecImplementation(async ({ program, args, cwd }) => {
     calls.push({ program, args, cwd });
-    if (program === "git") {
-      if (args[0] === "worktree") {
-        await mkdir(mergeWorktree, { recursive: true }); // simulate worktree creation
-      }
-      return { stdout: "", stderr: "" };
+    if (program !== "git") {
+      throw new Error("codex should not be called in clean merge");
     }
 
-    return { stdout: JSON.stringify(sample), stderr: "" };
+    const key = args.join(" ");
+    if (args[0] === "worktree") {
+      await mkdir(mergeWorktree, { recursive: true });
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "rev-parse" && args[1] === "--verify") {
+      const err: any = new Error("missing branch");
+      err.code = 1;
+      err.stderr = "not found";
+      throw err;
+    }
+    if (args[0] === "branch") {
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "merge") {
+      return { stdout: "Merged", stderr: "" };
+    }
+    if (args[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "add" || args[0] === "commit") {
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "diff" && args[1] === "--name-only") {
+      return { stdout: "a.txt\nb.txt\n", stderr: "" };
+    }
+
+    return { stdout: "", stderr: "" };
   });
 
   try {
@@ -57,63 +75,14 @@ test("codexMergeResults adds merge worktree, resolves paths, and parses stdout J
       { context: { baseDir } } as any,
     );
 
-    assert.deepEqual(result, sample);
+    assert.equal(result.status, "ok");
+    assert.deepEqual(result.touched_files, ["a.txt", "b.txt"]);
     const worktreeAdd = calls.find((c) => c.program === "git" && c.args[0] === "worktree");
     assert.ok(worktreeAdd);
     assert.deepEqual(worktreeAdd?.args, ["worktree", "add", mergeWorktree, resultBranch]);
     assert.equal(worktreeAdd?.cwd, projectRoot);
-    const codexCall = calls.find((c) => c.program === "codex");
-    assert.equal(codexCall?.cwd, mergeWorktree);
-
-    const prompt = codexCall?.args?.join(" ") ?? "";
-    assert.match(prompt, /task-1/);
-    assert.match(prompt, /task-2/);
-  } finally {
-    await rm(baseDir, { recursive: true, force: true });
-  }
-});
-
-test("codexMergeResults skips git when merge worktree exists and parses stderr JSON on failure", async () => {
-  const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-err-"));
-  const projectRoot = path.join(baseDir, "repo");
-  const mergeWorktree = path.join(projectRoot, ".codex", "jobs", "job-existing", "worktrees", "result");
-  const resultBranch = "result-job-existing";
-  await mkdir(mergeWorktree, { recursive: true });
-
-  const sample: CodexMergeResultsResult = {
-    status: "needs_manual_review",
-    notes: "conflicts",
-    touched_files: [],
-  };
-
-  const calls: Array<{ program: string; cwd: string }> = [];
-
-  setMergeExecImplementation(async ({ program, cwd }) => {
-    calls.push({ program, cwd });
-    if (program === "git") {
-      return { stdout: "", stderr: "" };
-    }
-    const error: any = new Error("codex failed");
-    error.stdout = "noise";
-    error.stderr = JSON.stringify(sample);
-    throw error;
-  });
-
-  try {
-    const result = await codexMergeResults(
-      {
-        project_root: projectRoot,
-        job_id: "job-existing",
-        result_branch: resultBranch,
-        subtasks_results: [{ subtask_id: "s1", worktree_path: mergeWorktree, branch: "task-s1", summary: "done" }],
-      },
-      { context: { baseDir } } as any,
-    );
-
-    assert.deepEqual(result, sample);
-    assert.ok(calls.some((c) => c.program === "git"));
-    const codexCall = calls.find((c) => c.program === "codex");
-    assert.equal(codexCall?.cwd, mergeWorktree);
+    const mergeCalls = calls.filter((c) => c.program === "git" && c.args[0] === "merge");
+    assert.equal(mergeCalls.length, 2);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }
@@ -135,11 +104,6 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
   const expectedResultBranch = context.resultBranch;
 
   const calls: Array<{ program: string; args?: string[]; cwd?: string; label?: string }> = [];
-  const sample: CodexMergeResultsResult = {
-    status: "ok",
-    notes: "ok",
-    touched_files: ["x.txt"],
-  };
 
   setMergeExecImplementation(async ({ program, args, cwd, label }) => {
     calls.push({ program, args, cwd, label });
@@ -155,10 +119,18 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
         await mkdir(mergeWorktree, { recursive: true });
         return { stdout: "", stderr: "" };
       }
+      if (args?.[0] === "merge") return { stdout: "", stderr: "" };
+      if (args?.[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
+        return { stdout: "", stderr: "" };
+      }
+      if (args?.[0] === "add" || args?.[0] === "commit") return { stdout: "", stderr: "" };
+      if (args?.[0] === "diff" && args[1] === "--name-only") {
+        return { stdout: "x.txt\n", stderr: "" };
+      }
       return { stdout: "", stderr: "" };
     }
 
-    return { stdout: JSON.stringify(sample), stderr: "" };
+    return { stdout: "", stderr: "" };
   });
 
   try {
@@ -175,7 +147,8 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
       { context } as any,
     );
 
-    assert.deepEqual(result, sample);
+    assert.equal(result.status, "ok");
+    assert.ok(Array.isArray(result.touched_files));
     const worktreeAdd = calls.find((c) => c.program === "git" && c.args?.[0] === "worktree");
     assert.ok(worktreeAdd);
     assert.equal(worktreeAdd?.args?.[2], mergeWorktree);
@@ -186,10 +159,71 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
     assert.equal(branchCreate?.args?.[1], expectedResultBranch);
     assert.equal(branchCreate?.args?.[2], baseBranchCtx);
 
-    const codexCall = calls.find((c) => c.program === "codex");
-    assert.ok(codexCall);
-    assert.equal(codexCall?.cwd, mergeWorktree);
-    assert.equal(codexCall?.label, `codex-merge:${expectedResultBranch}`);
+    assert.ok(!calls.some((c) => c.program === "codex"), "codex should not run for clean merges");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("codexMergeResults invokes Codex for conflicts but keeps git pointer intact", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-conflicts-"));
+  const projectRoot = path.join(baseDir, "repo");
+  await mkdir(projectRoot, { recursive: true });
+
+  const context = buildOrchestratorContext({ repoRoot: projectRoot, jobId: "job-c", baseBranch: "main" });
+  const mergeWorktree = context.resultWorktree;
+  const gitPointer = "gitdir: /tmp/main/.git/worktrees/result\n";
+
+  await mkdir(mergeWorktree, { recursive: true });
+  await (await import("node:fs/promises")).writeFile(path.join(mergeWorktree, ".git"), gitPointer);
+
+  const calls: Array<{ program: string; args?: string[]; cwd?: string; label?: string }> = [];
+  let codexCalled = false;
+  let resolved = false;
+
+  setMergeExecImplementation(async ({ program, args, cwd, label }) => {
+    calls.push({ program, args, cwd, label });
+    if (program === "git") {
+      if (args?.[0] === "rev-parse") {
+        throw Object.assign(new Error("missing branch"), { code: 1, stderr: "missing" });
+      }
+      if (args?.[0] === "branch") return { stdout: "", stderr: "" };
+      if (args?.[0] === "worktree") return { stdout: "", stderr: "" };
+      if (args?.[0] === "merge") return { stdout: "", stderr: "" };
+      if (args?.[0] === "diff" && args[2] === "--diff-filter=U") {
+        return { stdout: resolved ? "" : "conflict.txt\n", stderr: "" };
+      }
+      if (args?.[0] === "diff" && args[1] === "--name-only" && args[2]?.includes("...")) {
+        return { stdout: "conflict.txt\n", stderr: "" };
+      }
+      if (args?.[0] === "add" || args?.[0] === "commit") return { stdout: "", stderr: "" };
+      return { stdout: "", stderr: "" };
+    }
+    if (program === "codex") {
+      // Simulate Codex edit; do not touch .git
+      resolved = true;
+      codexCalled = true;
+      return { stdout: "done", stderr: "" };
+    }
+    throw new Error("unexpected program");
+  });
+
+  try {
+    const result = await codexMergeResults(
+      {
+        project_root: projectRoot,
+        job_id: "job-c",
+        base_branch: "main",
+        result_branch: context.resultBranch,
+        subtasks_results: [{ subtask_id: "s1", worktree_path: projectRoot, branch: "feature", summary: "ok" }],
+      },
+      { context } as any,
+    );
+
+    assert.equal(result.status, "ok");
+    assert.ok(codexCalled, "codex should be called for conflicts");
+    const gitFile = await (await import("node:fs/promises")).readFile(path.join(mergeWorktree, ".git"), "utf8");
+    assert.equal(gitFile, gitPointer);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

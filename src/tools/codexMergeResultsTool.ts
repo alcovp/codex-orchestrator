@@ -1,6 +1,6 @@
 import { tool, RunContext } from "@openai/agents";
 import { z } from "zod";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -51,16 +51,18 @@ type MergeExec = (args: {
   args: string[];
   cwd: string;
   label?: string;
+  allowNonZero?: boolean;
+  captureLimit?: number;
 }) => Promise<{ stdout: string; stderr: string }>;
 
-const defaultExec: MergeExec = async ({ program, args, cwd, label }) => {
+const defaultExec: MergeExec = async ({ program, args, cwd, label, captureLimit }) => {
   if (program === "codex") {
     return runWithCodexTee({
       command: program,
       args,
       cwd,
       label: label ?? "codex-merge",
-      captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+      captureLimit: captureLimit ?? DEFAULT_CODEX_CAPTURE_LIMIT,
     });
   }
 
@@ -116,35 +118,6 @@ async function ensureParentDir(p: string) {
 function sanitizeBranchName(name: string, fallback: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9._/-]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || fallback;
-}
-
-function buildMergePrompt(
-  subtasksResults: Array<{ subtask_id: string; worktree_path: string; summary: string; branch: string }>,
-  targetBranch: string,
-  mergeWorktree: string,
-): string {
-  const jsonPayload = JSON.stringify(subtasksResults, null, 2);
-  return [
-    `Ты в result-ветке ${targetBranch} (worktree: ${mergeWorktree}).`,
-    "",
-    "Вот JSON с результатами подзадач:",
-    jsonPayload,
-    "",
-    "Твоя задача:",
-    "- Влить все ветки подзадач в эту result-ветку локально (push запрещен).",
-    "- Разрулить конфликты, привести стиль к единому виду.",
-    "- Обновить документацию/README, если нужно.",
-    "- Оставить итоговые коммиты в result-ветке.",
-    "- В конце выдать JSON-отчет:",
-    "",
-    "{",
-    '  "status": "ok" | "needs_manual_review",',
-    '  "notes": "string",',
-    '  "touched_files": ["...", "..."]',
-    "}",
-    "",
-    "Не пиши ничего, кроме валидного JSON.",
-  ].join("\n");
 }
 
 function tryParseJson(text: string): unknown | null {
@@ -209,6 +182,144 @@ async function ensureResultBranch(
   });
 }
 
+async function runGit(
+  args: string[],
+  cwd: string,
+  exec: MergeExec,
+  allowNonZero = false,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  try {
+    const { stdout, stderr } = await exec({ program: "git", args, cwd });
+    return { stdout: stdout ?? "", stderr: stderr ?? "", code: 0 };
+  } catch (error: any) {
+    const code = typeof error?.code === "number" ? error.code : 1;
+    if (allowNonZero) {
+      return {
+        stdout: error?.stdout ?? "",
+        stderr: error?.stderr ?? error?.message ?? "",
+        code,
+      };
+    }
+    throw error;
+  }
+}
+
+async function getUnmergedFiles(cwd: string, exec: MergeExec): Promise<string[]> {
+  const { stdout } = await runGit(["diff", "--name-only", "--diff-filter=U"], cwd, exec, true);
+  return stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function collectTouchedFiles(baseBranch: string, cwd: string, exec: MergeExec): Promise<string[]> {
+  const { stdout } = await runGit(["diff", "--name-only", `${baseBranch}...HEAD`], cwd, exec, true);
+  return stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function readGitPointerFile(worktreePath: string): Promise<string> {
+  const gitPath = path.join(worktreePath, ".git");
+  const stats = await lstat(gitPath);
+  if (!stats.isFile()) {
+    throw new Error(".git in merge worktree is not a file; Codex may have run git init.");
+  }
+  return readFile(gitPath, "utf8");
+}
+
+async function assertGitPointerUnchanged(worktreePath: string, before: string) {
+  const gitPath = path.join(worktreePath, ".git");
+  const stats = await lstat(gitPath);
+  if (!stats.isFile()) {
+    throw new Error(".git in merge worktree was modified (not a file anymore); aborting merge.");
+  }
+  const after = await readFile(gitPath, "utf8");
+  if (after.trim() !== before.trim()) {
+    throw new Error(".git pointer was modified during Codex run; aborting merge.");
+  }
+}
+
+function buildConflictPrompt(branch: string, conflictFiles: string[]): string {
+  const list = conflictFiles.length ? conflictFiles.join(", ") : "(unknown)";
+  return [
+    `Ты находишься в рабочем дереве с текущей веткой после git merge --no-commit ветки "${branch}".`,
+    "В файлах есть конфликтные маркеры <<<<<<< ======= >>>>>>>.",
+    "",
+    "ВАЖНО: НЕЛЬЗЯ выполнять любые git-команды (git init/merge/rebase/commit/push/status и т.п.),",
+    "нельзя трогать .git/.git-local и другие git-файлы. Только редактируй файлы.",
+    "",
+    "Твоя задача:",
+    "- Разрешить конфликты в перечисленных файлах.",
+    `- Файлы с конфликтами: ${list}`,
+    "- Сохранить рабочее дерево без маркеров конфликтов.",
+    "",
+    "Не выполняй git-команды. Просто правь файлы.",
+  ].join("\n");
+}
+
+async function resolveConflictsWithCodex({
+  branch,
+  conflictFiles,
+  cwd,
+  exec,
+}: {
+  branch: string;
+  conflictFiles: string[];
+  cwd: string;
+  exec: MergeExec;
+}) {
+  const gitFileBefore = await readGitPointerFile(cwd);
+  const prompt = buildConflictPrompt(branch, conflictFiles);
+  await exec({
+    program: "codex",
+    args: ["exec", "--full-auto", prompt],
+    cwd,
+    label: `codex-merge-conflicts:${branch}`,
+    // captureLimit handled inside runWithCodexTee defaults; explicit for clarity
+    captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+  });
+  await assertGitPointerUnchanged(cwd, gitFileBefore);
+}
+
+async function mergeBranchIntoResult(
+  branch: string,
+  mergeWorktree: string,
+  resultBranch: string,
+  exec: MergeExec,
+): Promise<{ branch: string; conflicts: string[] }> {
+  const mergeResult = await runGit(["merge", "--no-commit", "--no-ff", branch], mergeWorktree, exec, true);
+
+  let conflicts = await getUnmergedFiles(mergeWorktree, exec);
+  const hadConflicts = conflicts.length > 0 || mergeResult.code !== 0;
+  if (mergeResult.code !== 0 && conflicts.length === 0) {
+    throw new Error(
+      `git merge of branch "${branch}" failed without detectable conflicts:\n${mergeResult.stderr || mergeResult.stdout}`,
+    );
+  }
+
+  if (conflicts.length > 0) {
+    await resolveConflictsWithCodex({ branch, conflictFiles: conflicts, cwd: mergeWorktree, exec });
+    const remaining = await getUnmergedFiles(mergeWorktree, exec);
+    if (remaining.length > 0) {
+      throw new Error(
+        `Unmerged files remain after Codex conflict resolution for branch "${branch}": ${remaining.join(", ")}`,
+      );
+    }
+    conflicts = remaining;
+  }
+
+  await runGit(["add", "-A"], mergeWorktree, exec);
+  const message =
+    !hadConflicts
+      ? `Merge branch ${branch} into ${resultBranch}`
+      : `Merge branch ${branch} (conflicts resolved via Codex)`;
+  await runGit(["commit", "-m", message], mergeWorktree, exec);
+
+  return { branch, conflicts: hadConflicts ? conflicts : [] };
+}
+
 export async function codexMergeResults(
   params: CodexMergeResultsInput,
   runContext?: RunContext<OrchestratorContext>,
@@ -251,35 +362,23 @@ export async function codexMergeResults(
     worktree_path: resolveWorktreePath(r.worktree_path, repoRoot),
   }));
 
-  const prompt = buildMergePrompt(resolvedResults, resultBranch, mergeWorktree);
-  let stdout = "";
-  let stderr = "";
-
-  try {
-    const result = await execImplementation({
-      program: "codex",
-      args: ["exec", "--full-auto", prompt],
-      cwd: mergeWorktree,
-      label: `codex-merge:${resultBranch}`,
-    });
-    stdout = result.stdout ?? "";
-    stderr = result.stderr ?? "";
-    return normalizeOutput(extractJsonObject(stdout || stderr));
-  } catch (error: any) {
-    stdout = (error?.stdout ?? stdout ?? "") as string;
-    stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string;
-    try {
-      return normalizeOutput(extractJsonObject(`${stdout}\n${stderr}`));
-    } catch {
-      const parts = [
-        "codex_merge_results failed: could not parse final JSON.",
-        stdout ? `stdout (truncated):\n${truncate(stdout, OUTPUT_TRUNCATE)}` : null,
-        stderr ? `stderr (truncated):\n${truncate(stderr, OUTPUT_TRUNCATE)}` : null,
-        error?.message ? `error: ${error.message}` : null,
-      ].filter(Boolean);
-      throw new Error(parts.join("\n\n"));
-    }
+  const mergeSummaries: Array<{ branch: string; conflicts: string[] }> = [];
+  for (const result of resolvedResults) {
+    const summary = await mergeBranchIntoResult(result.branch, mergeWorktree, resultBranch, execImplementation);
+    mergeSummaries.push(summary);
   }
+
+  const touchedFiles = await collectTouchedFiles(context.baseBranch, mergeWorktree, execImplementation);
+  const hadConflicts = mergeSummaries.some((s) => s.conflicts.length > 0);
+  const notes = hadConflicts
+    ? `Merged ${mergeSummaries.length} branches; conflicts were resolved via Codex where needed.`
+    : `Merged ${mergeSummaries.length} branches without conflicts.`;
+
+  return {
+    status: "ok",
+    notes,
+    touched_files: touchedFiles,
+  };
 }
 
 export const codexMergeResultsTool = tool({
