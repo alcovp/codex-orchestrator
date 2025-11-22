@@ -128,3 +128,57 @@ test("codexRunSubtask skips git when worktree exists and parses stderr JSON on f
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+test("codexRunSubtask prefers runContext job/base over params", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-subtask-context-"));
+  const projectRoot = path.join(baseDir, "repo");
+  await mkdir(projectRoot, { recursive: true });
+
+  const jobIdCtx = "job-ctx";
+  const baseBranchCtx = "ctx-main";
+  const worktreeName = "wt-ctx";
+  const expectedBranch = `task-${worktreeName}-${jobIdCtx}`;
+  const worktreeDir = path.join(projectRoot, ".codex", "jobs", jobIdCtx, "worktrees", worktreeName);
+
+  const calls: Array<{ program: string; args?: string[]; cwd?: string }> = [];
+
+  setSubtaskExecImplementation(async ({ program, args, cwd }) => {
+    calls.push({ program, args, cwd });
+
+    if (program === "git") {
+      if (args?.[0] === "worktree") {
+        await mkdir(worktreeDir, { recursive: true });
+      }
+      return { stdout: "", stderr: "" };
+    }
+
+    const result: CodexRunSubtaskResult = {
+      subtask_id: "ctx",
+      status: "ok",
+      summary: "ok",
+      important_files: [],
+      branch: expectedBranch,
+    };
+    return { stdout: JSON.stringify(result), stderr: "" };
+  });
+
+  try {
+    const result = await codexRunSubtask(
+      {
+        project_root: projectRoot,
+        worktree_name: worktreeName,
+        job_id: "param-job",
+        base_branch: "param-main",
+        subtask: { id: "ctx", title: "Ctx", description: "desc", parallel_group: null },
+      },
+      { context: { baseDir, repoRoot: projectRoot, jobId: jobIdCtx, baseBranch: baseBranchCtx } } as any,
+    );
+
+    assert.equal(result.branch, expectedBranch);
+    const worktreeAdd = calls.find((c) => c.program === "git" && c.args?.[0] === "worktree");
+    assert.ok(worktreeAdd, "git worktree add should be called");
+    assert.equal(worktreeAdd?.args?.[5], baseBranchCtx);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

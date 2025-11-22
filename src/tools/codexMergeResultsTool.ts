@@ -18,16 +18,20 @@ const OUTPUT_TRUNCATE = 2000;
 
 const MergeInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
-  job_id: z.string().describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees."),
-  base_branch: z.string().default("main"),
-  result_branch: z.string().describe("Result branch name (e.g., result-<jobId>)."),
+  job_id: z
+    .string()
+    .describe("Job id to place merge worktree under .codex/jobs/<jobId>/worktrees.")
+    .optional()
+    .nullable(),
+  base_branch: z.string().optional().nullable(),
+  result_branch: z.string().describe("Result branch name (e.g., result-<jobId>).").optional().nullable(),
   subtasks_results: z
     .array(
       z.object({
         subtask_id: z.string(),
         worktree_path: z.string(),
         branch: z.string(),
-        summary: z.string(),
+        summary: z.string().optional().nullable(),
       }),
     )
     .describe("Results from codex_run_subtask: paths may be absolute or relative to project_root."),
@@ -212,15 +216,22 @@ export async function codexMergeResults(
   const repoRoot = resolveProjectRoot(params.project_root, runContext);
   await ensureProjectRoot(repoRoot);
 
-  const resolvedJobId = resolveJobId(params.job_id ?? runContext?.context?.jobId);
-  const baseBranch = params.base_branch ?? runContext?.context?.baseBranch ?? DEFAULT_BASE_BRANCH;
+  const contextJobId = runContext?.context?.jobId;
+  const contextBaseBranch = runContext?.context?.baseBranch;
+  const contextResultBranch = runContext?.context?.resultBranch;
+
+  const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined);
+  const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH;
   const context = buildOrchestratorContext({
     repoRoot,
     jobId: resolvedJobId,
     baseBranch,
   });
 
-  const resultBranch = sanitizeBranchName(params.result_branch, context.resultBranch);
+  const resultBranch = sanitizeBranchName(
+    contextResultBranch ?? params.result_branch ?? context.resultBranch,
+    context.resultBranch,
+  );
   const mergeWorktree = path.resolve(context.resultWorktree);
   await ensureParentDir(mergeWorktree);
   await ensureResultBranch(repoRoot, resultBranch, context.baseBranch, execImplementation);
@@ -236,6 +247,7 @@ export async function codexMergeResults(
 
   const resolvedResults = params.subtasks_results.map((r) => ({
     ...r,
+    summary: r.summary ?? "",
     worktree_path: resolveWorktreePath(r.worktree_path, repoRoot),
   }));
 

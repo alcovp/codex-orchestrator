@@ -19,16 +19,22 @@ const OUTPUT_TRUNCATE = 2000;
 const SubtaskInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
   worktree_name: z.string().describe("Name for the worktree under .codex/jobs/<jobId>/worktrees/."),
-  job_id: z.string().describe("Job id to place worktrees under .codex/jobs/<jobId>."),
+  job_id: z
+    .string()
+    .describe("Job id to place worktrees under .codex/jobs/<jobId>.")
+    .optional()
+    .nullable(),
   base_branch: z
     .string()
     .describe("Base branch/ref for git worktree add (e.g., main, HEAD, origin/main).")
-    .default("main"),
+    .optional()
+    .nullable(),
   subtask: z.object({
     id: z.string(),
     title: z.string(),
     description: z.string(),
-    parallel_group: z.string().describe("Parallel group id (string, can be empty)."),
+    parallel_group: z.string().describe("Parallel group id (string, can be empty).").optional().nullable(),
+    notes: z.string().optional().nullable(),
   }),
 });
 
@@ -215,8 +221,11 @@ export async function codexRunSubtask(
   const repoRoot = resolveProjectRoot(params.project_root, runContext);
   await ensureProjectRoot(repoRoot);
 
-  const resolvedJobId = resolveJobId(params.job_id ?? runContext?.context?.jobId);
-  const baseBranch = params.base_branch ?? runContext?.context?.baseBranch ?? DEFAULT_BASE_BRANCH;
+  const contextJobId = runContext?.context?.jobId;
+  const contextBaseBranch = runContext?.context?.baseBranch;
+
+  const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined);
+  const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH;
   const context = buildOrchestratorContext({
     repoRoot,
     jobId: resolvedJobId,
@@ -238,7 +247,7 @@ export async function codexRunSubtask(
   if (!exists) {
     await execImplementation({
       program: "git",
-      args: ["worktree", "add", "-b", branchName, worktreeDir, baseBranch],
+      args: ["worktree", "add", "-b", branchName, worktreeDir, context.baseBranch],
       cwd: repoRoot,
     });
   } else {
