@@ -4,6 +4,7 @@ import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 import {
   buildOrchestratorContext,
   DEFAULT_BASE_BRANCH,
@@ -45,9 +46,20 @@ type MergeExec = (args: {
   program: "git" | "codex";
   args: string[];
   cwd: string;
+  label?: string;
 }) => Promise<{ stdout: string; stderr: string }>;
 
-const defaultExec: MergeExec = async ({ program, args, cwd }) => {
+const defaultExec: MergeExec = async ({ program, args, cwd, label }) => {
+  if (program === "codex") {
+    return runWithCodexTee({
+      command: program,
+      args,
+      cwd,
+      label: label ?? "codex-merge",
+      captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+    });
+  }
+
   return execFileAsync(program, args, { cwd, maxBuffer: DEFAULT_MAX_BUFFER });
 };
 
@@ -236,6 +248,7 @@ export async function codexMergeResults(
       program: "codex",
       args: ["exec", "--full-auto", prompt],
       cwd: mergeWorktree,
+      label: `codex-merge:${resultBranch}`,
     });
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";

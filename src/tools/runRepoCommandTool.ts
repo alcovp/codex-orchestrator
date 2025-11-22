@@ -5,6 +5,7 @@ import { promisify } from "util";
 import { promises as fsPromises } from "fs";
 import path from "path";
 import type { OrchestratorContext } from "../orchestratorTypes.js";
+import { runWithCodexTee } from "./codexExecLogger.js";
 
 const execAsync = promisify(exec);
 const LOG_FILE = path.resolve(process.cwd(), "run_repo_command.log");
@@ -170,7 +171,17 @@ command: ${command}
   }
 
   try {
-    const { stdout, stderr } = await execAsync(command, { cwd });
+    const codexPrefix = command.trim().startsWith("codex");
+    const execResult = codexPrefix
+      ? await runWithCodexTee({
+          command: "bash",
+          args: ["-lc", command],
+          cwd,
+          label: "run_repo_codex",
+        })
+      : await execAsync(command, { cwd });
+    const stdout = execResult.stdout;
+    const stderr = execResult.stderr;
     const outcomeMessage = `# run_repo_command
 cwd: ${cwd}
 command: ${command}

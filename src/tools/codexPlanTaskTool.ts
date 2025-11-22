@@ -2,12 +2,9 @@ import { tool, RunContext } from "@openai/agents";
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { OrchestratorContext } from "../orchestratorTypes.js";
+import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 
-const execFileAsync = promisify(execFile);
-const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
 const OUTPUT_TRUNCATE = 2000;
 
 const PlannerParamsSchema = z.object({
@@ -38,12 +35,19 @@ export type CodexPlanTaskResult = {
   >;
 };
 
-type PlannerExec = (args: { cwd: string; prompt: string }) => Promise<{ stdout: string; stderr: string }>;
+type PlannerExec = (args: {
+  cwd: string;
+  prompt: string;
+  label?: string;
+}) => Promise<{ stdout: string; stderr: string }>;
 
-const defaultExec: PlannerExec = async ({ cwd, prompt }) => {
-  return execFileAsync("codex", ["exec", "--full-auto", prompt], {
+const defaultExec: PlannerExec = async ({ cwd, prompt, label }) => {
+  return runWithCodexTee({
+    command: "codex",
+    args: ["exec", "--full-auto", prompt],
     cwd,
-    maxBuffer: DEFAULT_MAX_BUFFER,
+    label: label ?? "codex-plan",
+    captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
   });
 };
 
@@ -174,7 +178,7 @@ export async function codexPlanTask(
   let stderr = "";
 
   try {
-    const result = await execImplementation({ cwd: projectRoot, prompt });
+    const result = await execImplementation({ cwd: projectRoot, prompt, label: "codex-plan" });
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
     return normalizeOutput(extractJsonObject(stdout || stderr));

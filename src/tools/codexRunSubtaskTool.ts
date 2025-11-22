@@ -10,6 +10,7 @@ import {
   resolveJobId,
   type OrchestratorContext,
 } from "../orchestratorTypes.js";
+import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
@@ -46,9 +47,20 @@ type SubtaskExec = (args: {
   program: "git" | "codex";
   args: string[];
   cwd: string;
+  label?: string;
 }) => Promise<{ stdout: string; stderr: string }>;
 
-const defaultExec: SubtaskExec = async ({ program, args, cwd }) => {
+const defaultExec: SubtaskExec = async ({ program, args, cwd, label }) => {
+  if (program === "codex") {
+    return runWithCodexTee({
+      command: program,
+      args,
+      cwd,
+      label: label ?? "codex-subtask",
+      captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+    });
+  }
+
   return execFileAsync(program, args, { cwd, maxBuffer: DEFAULT_MAX_BUFFER });
 };
 
@@ -243,6 +255,7 @@ export async function codexRunSubtask(
       program: "codex",
       args: ["exec", "--full-auto", prompt],
       cwd: worktreeDir,
+      label: `codex-subtask:${params.subtask.id}`,
     });
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
