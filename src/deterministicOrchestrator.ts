@@ -14,8 +14,10 @@ import {
 } from "./tools/codexMergeResultsTool.js";
 import {
   buildOrchestratorContext,
+  resolveRepoRoot,
   type OrchestratorContext,
 } from "./orchestratorTypes.js";
+import { resolveBaseBranch } from "./baseBranch.js";
 
 type SubtaskPlan = CodexPlanTaskResult["subtasks"][number];
 
@@ -126,9 +128,11 @@ function buildBatches(plan: CodexPlanTaskResult): SubtaskPlan[][] {
 export async function runDeterministicOrchestrator(
   options: DeterministicOrchestratorOptions,
 ): Promise<DeterministicOrchestratorResult> {
+  const repoRoot = resolveRepoRoot(options.repoRoot ?? options.projectRoot ?? options.baseDir);
+  const baseBranch = await resolveBaseBranch({ repoRoot, explicitBranch: options.baseBranch });
   const context = buildOrchestratorContext({
-    repoRoot: options.repoRoot ?? options.projectRoot ?? options.baseDir,
-    baseBranch: options.baseBranch,
+    repoRoot,
+    baseBranch,
     jobId: options.jobId,
   });
   const projectRoot = context.repoRoot;

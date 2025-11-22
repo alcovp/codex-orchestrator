@@ -1,9 +1,14 @@
 import { Agent, run } from "@openai/agents";
-import { buildOrchestratorContext, type OrchestratorContext } from "./orchestratorTypes.js";
+import {
+  buildOrchestratorContext,
+  resolveRepoRoot,
+  type OrchestratorContext,
+} from "./orchestratorTypes.js";
 import { codexPlanTaskTool } from "./tools/codexPlanTaskTool.js";
 import { codexRunSubtaskTool } from "./tools/codexRunSubtaskTool.js";
 import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
+import { resolveBaseBranch } from "./baseBranch.js";
 
 export interface OrchestratorRunOptions {
   /**
@@ -76,9 +81,11 @@ export function setRunImplementationForTesting(fn: RunImplementation) {
 }
 
 export async function runOrchestrator(options: OrchestratorRunOptions): Promise<string> {
+  const repoRoot = resolveRepoRoot(options.baseDir);
+  const baseBranch = await resolveBaseBranch({ repoRoot, explicitBranch: options.baseBranch });
   const context = buildOrchestratorContext({
-    repoRoot: options.baseDir,
-    baseBranch: options.baseBranch,
+    repoRoot,
+    baseBranch,
     jobId: options.jobId,
   });
 

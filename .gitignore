@@ -16,3 +16,4 @@ dist/
 #.pnp.*
 /run_repo_command.log
 dispatcher.log
+debug/
