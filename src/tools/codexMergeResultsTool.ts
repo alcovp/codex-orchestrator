@@ -325,7 +325,8 @@ async function resolveConflictsWithCodex({
   });
   await exec({
     program: "codex",
-    args: ["exec", "--full-auto", "--reasoning-effort", "medium", "--max-output-tokens", "1200", prompt],
+    // Keep conflict worker lightweight; avoid heavy defaults and extra flags unsupported by the CLI.
+    args: ["exec", "--full-auto", prompt],
     cwd,
     label: `codex-merge-conflicts:${branch}`,
     // captureLimit handled inside runWithCodexTee defaults; explicit for clarity
