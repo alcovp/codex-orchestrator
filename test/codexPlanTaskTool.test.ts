@@ -45,6 +45,10 @@ test("codexPlanTask resolves baseDir-relative project_root and parses stdout JSO
 
     assert.equal(execCalls[0]?.cwd, projectRoot);
     assert.ok(execCalls[0]?.prompt.includes("Ship the feature"));
+    assert.ok(
+      execCalls[0]?.prompt.includes("Не добавляй отдельные подзадачи"),
+      "planner prompt should discourage extra analysis/QA subtasks",
+    );
     assert.deepEqual(result, samplePlan);
   } finally {
     await rm(baseDir, { recursive: true, force: true });

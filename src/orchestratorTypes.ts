@@ -33,6 +33,10 @@ export interface OrchestratorContext {
    * Worktree path for the merge/result stage.
    */
   resultWorktree: string;
+  /**
+   * Original user task/description for the current run.
+   */
+  taskDescription: string;
 }
 
 export const DEFAULT_BASE_BRANCH = "main";
@@ -74,6 +78,7 @@ export function buildOrchestratorContext(options: {
   baseDir?: string;
   jobId?: string;
   baseBranch?: string;
+  taskDescription?: string;
 }): OrchestratorContext {
   const repoRoot = resolveRepoRoot(options.repoRoot ?? options.baseDir);
   const jobId = resolveJobId(options.jobId);
@@ -82,6 +87,7 @@ export function buildOrchestratorContext(options: {
   const worktreesRoot = path.join(jobsRoot, "worktrees");
   const resultBranch = sanitizeSegment(`result-${jobId}`, `result-${jobId}`);
   const resultWorktree = path.join(worktreesRoot, "result");
+  const taskDescription = options.taskDescription ?? "";
 
   return {
     repoRoot,
@@ -92,5 +98,6 @@ export function buildOrchestratorContext(options: {
     worktreesRoot,
     resultBranch,
     resultWorktree,
+    taskDescription,
   };
 }

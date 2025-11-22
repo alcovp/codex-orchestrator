@@ -134,6 +134,7 @@ export async function runDeterministicOrchestrator(
     repoRoot,
     baseBranch,
     jobId: options.jobId,
+    taskDescription: options.userTask,
   });
   const projectRoot = context.repoRoot;
 
@@ -161,6 +162,7 @@ export async function runDeterministicOrchestrator(
           worktree_name: worktreeName,
           job_id: context.jobId,
           base_branch: context.baseBranch,
+          user_task: options.userTask,
           subtask,
         },
         { context } as any,
@@ -178,12 +180,17 @@ export async function runDeterministicOrchestrator(
       job_id: context.jobId,
       base_branch: context.baseBranch,
       result_branch: context.resultBranch,
-      subtasks_results: subtaskResults.map((r) => ({
-        subtask_id: r.subtask.id,
-        worktree_path: r.worktreePath,
-        branch: r.result.branch,
-        summary: r.result.summary,
-      })),
+      subtasks_results: subtaskResults.map((r) => {
+        if (!r.result.branch) {
+          throw new Error(`Missing branch for subtask ${r.subtask.id}`);
+        }
+        return {
+          subtask_id: r.subtask.id,
+          worktree_path: r.worktreePath,
+          branch: r.result.branch,
+          summary: r.result.summary,
+        };
+      }),
     },
     { context } as any,
   );

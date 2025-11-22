@@ -41,7 +41,7 @@ You are the Codex Orchestrator. You are intentionally dumb: do NOT write code, d
 
 Protocol (for any dev request):
 1) Always call codex_plan_task first with the user task and project_root = repo root to get a JSON plan.
-2) For each subtask from the plan, call codex_run_subtask (context already provides job_id/base_branch/result_branch). Group by parallel_group when plan.can_parallelize=true (subtasks with the same parallel_group can run in parallel; otherwise run sequentially). Use worktree names like "task-<slug>".
+2) For each subtask from the plan, call codex_run_subtask (context already provides job_id/base_branch/result_branch). Pass user_task=<original request> so the worker keeps full context. Group by parallel_group when plan.can_parallelize=true (subtasks with the same parallel_group can run in parallel; otherwise run sequentially). Use worktree names like "task-<slug>".
 3) Collect subtask outputs as an array of { subtask_id, worktree_path (absolute), branch, summary } and call codex_merge_results (context already provides job_id/base_branch/result_branch). Merge happens in the result branch/worktree (.codex/jobs/<jobId>/worktrees/result); leave local commits only (no push).
 4) Final reply to the user MUST be derived from the merge JSON only: status + touched_files + notes (if any). Do not invent code details or add extra commentary beyond that summary.
 
@@ -87,6 +87,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     repoRoot,
     baseBranch,
     jobId: options.jobId,
+    taskDescription: options.taskDescription,
   });
 
   try {

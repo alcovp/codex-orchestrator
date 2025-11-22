@@ -21,6 +21,7 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
   const jobId = "job-test";
   const worktreeName = "wt-alpha";
   const worktreeDir = path.join(projectRoot, ".codex", "jobs", jobId, "worktrees", worktreeName);
+  const userTask = "Ship a feature end-to-end";
 
   const sample: CodexRunSubtaskResult = {
     subtask_id: "s1",
@@ -50,6 +51,7 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
         worktree_name: worktreeName,
         job_id: jobId,
         base_branch: "main",
+        user_task: userTask,
         subtask: { id: "s1", title: "Do it", description: "desc", parallel_group: "g1" },
       },
       { context: { baseDir } } as any,
@@ -69,6 +71,10 @@ test("codexRunSubtask adds a worktree and parses trailing JSON", async () => {
     assert.equal(worktreeAdd?.cwd, projectRoot);
     const codexCall = calls.find((c) => c.program === "codex");
     assert.equal(codexCall?.cwd, worktreeDir);
+    assert.ok(
+      codexCall?.args?.[2]?.includes(userTask),
+      "Subtask prompt should include full user task context",
+    );
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

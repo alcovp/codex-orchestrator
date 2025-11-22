@@ -24,6 +24,11 @@ const SubtaskInputSchema = z.object({
     .describe("Job id to place worktrees under .codex/jobs/<jobId>.")
     .optional()
     .nullable(),
+  user_task: z
+    .string()
+    .describe("Full original user task for context (helps keep subtasks aligned).")
+    .optional()
+    .nullable(),
   base_branch: z
     .string()
     .describe("Base branch/ref for git worktree add (e.g., main, HEAD, origin/main).")
@@ -116,12 +121,23 @@ function sanitizeBranchName(name: string, fallback: string): string {
   return cleaned || fallback;
 }
 
-function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"]): string {
+function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"], userTask: string): string {
+  const userTaskSection = userTask
+    ? [
+        "Исходная задача пользователя (контекст, не перепоручай заново, просто держи в уме):",
+        userTask,
+        "",
+      ]
+    : [];
+
   return [
-    `Задача: ${subtask.title}`,
+    ...userTaskSection,
+    `Твоя подзадача: ${subtask.title}`,
     "",
-    "Описание:",
+    "Описание подзадачи:",
     subtask.description,
+    "",
+    "Держи в фокусе именно эту подзадачу и проверяй, что решение вписывается в исходный запрос.",
     "",
     "Требования:",
     "- Работай строго в контексте текущего репозитория.",
@@ -312,7 +328,9 @@ export async function codexRunSubtask(
     branchName = current || branchName;
   }
 
-  const prompt = buildSubtaskPrompt(params.subtask);
+  const userTaskContextRaw = params.user_task ?? runContext?.context?.taskDescription ?? "";
+  const userTaskContext = typeof userTaskContextRaw === "string" ? userTaskContextRaw.trim() : "";
+  const prompt = buildSubtaskPrompt(params.subtask, userTaskContext);
   let stdout = "";
   let stderr = "";
 
