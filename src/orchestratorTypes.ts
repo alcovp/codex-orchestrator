@@ -37,6 +37,10 @@ export interface OrchestratorContext {
    * Original user task/description for the current run.
    */
   taskDescription: string;
+  /**
+   * Raw user task text for this run (same as taskDescription, kept for clarity).
+   */
+  userTask: string;
 }
 
 export const DEFAULT_BASE_BRANCH = "main";
@@ -79,6 +83,7 @@ export function buildOrchestratorContext(options: {
   jobId?: string;
   baseBranch?: string;
   taskDescription?: string;
+  userTask?: string;
 }): OrchestratorContext {
   const repoRoot = resolveRepoRoot(options.repoRoot ?? options.baseDir);
   const jobId = resolveJobId(options.jobId);
@@ -87,7 +92,8 @@ export function buildOrchestratorContext(options: {
   const worktreesRoot = path.join(jobsRoot, "worktrees");
   const resultBranch = sanitizeSegment(`result-${jobId}`, `result-${jobId}`);
   const resultWorktree = path.join(worktreesRoot, "result");
-  const taskDescription = options.taskDescription ?? "";
+  const taskDescription = options.taskDescription ?? options.userTask ?? "";
+  const userTask = options.userTask ?? options.taskDescription ?? "";
 
   return {
     repoRoot,
@@ -99,5 +105,6 @@ export function buildOrchestratorContext(options: {
     resultBranch,
     resultWorktree,
     taskDescription,
+    userTask,
   };
 }

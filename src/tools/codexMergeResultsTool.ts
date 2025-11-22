@@ -15,6 +15,7 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
 const OUTPUT_TRUNCATE = 2000;
+const ORCHESTRATOR_GIT_AUTHOR = "Codex Orchestrator <orchestrator@codex.cli>";
 
 const MergeInputSchema = z.object({
   project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
@@ -204,12 +205,25 @@ async function runGit(
   }
 }
 
-async function getUnmergedFiles(cwd: string, exec: MergeExec): Promise<string[]> {
-  const { stdout } = await runGit(["diff", "--name-only", "--diff-filter=U"], cwd, exec, true);
-  return stdout
+const CONFLICT_STATUS_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
+function parseConflictsFromStatus(output: string): string[] {
+  return output
     .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^([A-Z?]{2})\s+(.*)$/);
+      return match ? { code: match[1], file: match[2] } : null;
+    })
+    .filter((entry): entry is { code: string; file: string } => Boolean(entry))
+    .filter((entry) => CONFLICT_STATUS_CODES.has(entry.code))
+    .map((entry) => entry.file.trim());
+}
+
+async function getUnmergedFiles(cwd: string, exec: MergeExec): Promise<string[]> {
+  const { stdout } = await runGit(["status", "--porcelain"], cwd, exec, true);
+  return parseConflictsFromStatus(stdout);
 }
 
 async function collectTouchedFiles(baseBranch: string, cwd: string, exec: MergeExec): Promise<string[]> {
@@ -241,21 +255,46 @@ async function assertGitPointerUnchanged(worktreePath: string, before: string) {
   }
 }
 
-function buildConflictPrompt(branch: string, conflictFiles: string[]): string {
-  const list = conflictFiles.length ? conflictFiles.join(", ") : "(unknown)";
+function buildConflictPrompt(options: {
+  branch: string;
+  conflictFiles: string[];
+  userTask: string;
+  headSummary: string;
+  branchSummary: string;
+}): string {
+  const { branch, conflictFiles, userTask, headSummary, branchSummary } = options;
+  const filesList = conflictFiles.length ? conflictFiles.join(", ") : "(список не передан)";
+  const userTaskText = userTask?.trim() ? truncate(userTask.trim(), 1500) : "(запрос не передан)";
+  const headLine = headSummary?.trim()
+    ? truncate(headSummary.trim(), 800)
+    : "HEAD already contains: (нет описания).";
+  const branchLine = branchSummary?.trim()
+    ? truncate(branchSummary.trim(), 800)
+    : "(нет summary для ветки).";
+
   return [
-    `Ты находишься в рабочем дереве с текущей веткой после git merge --no-commit ветки "${branch}".`,
+    `Ты находишься в result-ворктри после \`git merge --no-commit ветки "${branch}"\`.`,
     "В файлах есть конфликтные маркеры <<<<<<< ======= >>>>>>>.",
     "",
-    "ВАЖНО: НЕЛЬЗЯ выполнять любые git-команды (git init/merge/rebase/commit/push/status и т.п.),",
-    "нельзя трогать .git/.git-local и другие git-файлы. Только редактируй файлы.",
+    "Исходная задача пользователя:",
+    `"${userTaskText}"`,
+    "",
+    "Смысл ветвей:",
+    `- HEAD (текущая результатная ветка): ${headLine}.`,
+    `- Ветка "${branch}": ${branchLine}.`,
     "",
     "Твоя задача:",
-    "- Разрешить конфликты в перечисленных файлах.",
-    `- Файлы с конфликтами: ${list}`,
-    "- Сохранить рабочее дерево без маркеров конфликтов.",
+    `- Разрешить конфликты только в перечисленных файлах: ${filesList}.`,
+    "- Удалить все маркеры конфликтов <<<<<<< / ======= / >>>>>>>.",
+    `- Сохранить поведение, соответствующее задаче пользователя и уже реализованной логике в HEAD, аккуратно добавив изменения из ветки "${branch}".`,
     "",
-    "Не выполняй git-команды. Просто правь файлы.",
+    "Ограничения:",
+    "- НЕЛЬЗЯ выполнять git-команды (git init/merge/rebase/commit/push/status и т.п.) и нельзя трогать .git/.git-local.",
+    "- Вноси минимальные необходимые изменения только в окрестности конфликтных хунков.",
+    "- Не рефактори и не переписывай архитектуру игры/проекта без необходимости.",
+    "",
+    "Стоп-критерий:",
+    "- Как только во всех конфликтных файлах больше нет маркеров конфликтов, и код выглядит синтаксически корректным, сразу заканчивай и верни краткое резюме своих действий.",
   ].join("\n");
 }
 
@@ -264,17 +303,29 @@ async function resolveConflictsWithCodex({
   conflictFiles,
   cwd,
   exec,
+  userTask,
+  headSummary,
+  branchSummary,
 }: {
   branch: string;
   conflictFiles: string[];
   cwd: string;
   exec: MergeExec;
+  userTask: string;
+  headSummary: string;
+  branchSummary: string;
 }) {
   const gitFileBefore = await readGitPointerFile(cwd);
-  const prompt = buildConflictPrompt(branch, conflictFiles);
+  const prompt = buildConflictPrompt({
+    branch,
+    conflictFiles,
+    userTask,
+    headSummary,
+    branchSummary,
+  });
   await exec({
     program: "codex",
-    args: ["exec", "--full-auto", prompt],
+    args: ["exec", "--full-auto", "--reasoning-effort", "medium", "--max-output-tokens", "1200", prompt],
     cwd,
     label: `codex-merge-conflicts:${branch}`,
     // captureLimit handled inside runWithCodexTee defaults; explicit for clarity
@@ -283,12 +334,16 @@ async function resolveConflictsWithCodex({
   await assertGitPointerUnchanged(cwd, gitFileBefore);
 }
 
-async function mergeBranchIntoResult(
-  branch: string,
-  mergeWorktree: string,
-  resultBranch: string,
-  exec: MergeExec,
-): Promise<{ branch: string; conflicts: string[] }> {
+async function mergeBranchIntoResult(options: {
+  branch: string;
+  mergeWorktree: string;
+  resultBranch: string;
+  exec: MergeExec;
+  userTask: string;
+  headSummary: string;
+  branchSummary: string;
+}): Promise<{ branch: string; conflicts: string[] }> {
+  const { branch, mergeWorktree, resultBranch, exec, userTask, headSummary, branchSummary } = options;
   const mergeResult = await runGit(["merge", "--no-commit", "--no-ff", branch], mergeWorktree, exec, true);
 
   let conflicts = await getUnmergedFiles(mergeWorktree, exec);
@@ -300,30 +355,49 @@ async function mergeBranchIntoResult(
   }
 
   if (conflicts.length > 0) {
-    await resolveConflictsWithCodex({ branch, conflictFiles: conflicts, cwd: mergeWorktree, exec });
-    const addResult = await runGit(["add", "-A"], mergeWorktree, exec, true);
-    if (addResult.code !== 0) {
-      throw new Error(
-        `git add failed after Codex conflict resolution for branch "${branch}": ${addResult.stderr || addResult.stdout}`,
-      );
+    await resolveConflictsWithCodex({
+      branch,
+      conflictFiles: conflicts,
+      cwd: mergeWorktree,
+      exec,
+      userTask,
+      headSummary,
+      branchSummary,
+    });
+
+    const statusAfterCodex = await runGit(["status", "--porcelain"], mergeWorktree, exec, true);
+    const conflictsFromStatus = parseConflictsFromStatus(statusAfterCodex.stdout);
+    const filesToAdd = conflictsFromStatus.length > 0 ? conflictsFromStatus : conflicts;
+    for (const file of filesToAdd) {
+      const addResult = await runGit(["add", file], mergeWorktree, exec, true);
+      if (addResult.code !== 0) {
+        throw new Error(
+          `git add failed after Codex conflict resolution for branch "${branch}" on file "${file}": ${addResult.stderr || addResult.stdout}`,
+        );
+      }
     }
+
     const remaining = await getUnmergedFiles(mergeWorktree, exec);
     if (remaining.length > 0) {
       throw new Error(
         `Unmerged files remain after Codex conflict resolution for branch "${branch}": ${remaining.join(", ")}`,
       );
     }
-    conflicts = remaining;
+    conflicts = filesToAdd;
   }
 
   const status = await runGit(["status", "--porcelain"], mergeWorktree, exec, true);
   if (status.stdout.trim()) {
-    await runGit(["add", "-A"], mergeWorktree, exec);
     const message =
       !hadConflicts
         ? `Merge branch ${branch} into ${resultBranch}`
         : `Merge branch ${branch} (conflicts resolved via Codex)`;
-    const commitResult = await runGit(["commit", "-m", message], mergeWorktree, exec, true);
+    const commitResult = await runGit(
+      ["commit", "-m", message, "--author", ORCHESTRATOR_GIT_AUTHOR],
+      mergeWorktree,
+      exec,
+      true,
+    );
     if (commitResult.code !== 0 && !commitResult.stderr.includes("nothing to commit")) {
       throw new Error(`git commit failed while merging ${branch}: ${commitResult.stderr || commitResult.stdout}`);
     }
@@ -342,6 +416,7 @@ export async function codexMergeResults(
   const contextJobId = runContext?.context?.jobId;
   const contextBaseBranch = runContext?.context?.baseBranch;
   const contextResultBranch = runContext?.context?.resultBranch;
+  const userTask = runContext?.context?.userTask ?? runContext?.context?.taskDescription ?? "";
 
   const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined);
   const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH;
@@ -349,6 +424,8 @@ export async function codexMergeResults(
     repoRoot,
     jobId: resolvedJobId,
     baseBranch,
+    taskDescription: runContext?.context?.taskDescription,
+    userTask,
   });
 
   const resultBranch = sanitizeBranchName(
@@ -370,14 +447,45 @@ export async function codexMergeResults(
 
   const resolvedResults = params.subtasks_results.map((r) => ({
     ...r,
-    summary: r.summary ?? "",
+    summary: (r.summary ?? "").trim(),
     worktree_path: resolveWorktreePath(r.worktree_path, repoRoot),
   }));
 
   const mergeSummaries: Array<{ branch: string; conflicts: string[] }> = [];
+  const mergedHeadSummaries: string[] = [];
+
   for (const result of resolvedResults) {
-    const summary = await mergeBranchIntoResult(result.branch, mergeWorktree, resultBranch, execImplementation);
+    const headSummary =
+      mergedHeadSummaries.length > 0
+        ? `HEAD already contains: ${mergedHeadSummaries.join("; ")}`
+        : "HEAD already contains: base result branch without merged subtasks.";
+    const branchSummary = result.summary || "(no summary provided)";
+
+    const summary = await mergeBranchIntoResult({
+      branch: result.branch,
+      mergeWorktree,
+      resultBranch,
+      exec: execImplementation,
+      userTask,
+      headSummary,
+      branchSummary,
+    });
     mergeSummaries.push(summary);
+    mergedHeadSummaries.push(`branch ${result.branch} (${result.subtask_id}): ${branchSummary}`);
+  }
+
+  const finalStatus = await runGit(["status", "--porcelain"], mergeWorktree, execImplementation, true);
+  if (finalStatus.stdout.trim()) {
+    await runGit(["add", "-A"], mergeWorktree, execImplementation);
+    const finalCommit = await runGit(
+      ["commit", "-m", `Finalize merged subtasks into ${resultBranch}`, "--author", ORCHESTRATOR_GIT_AUTHOR],
+      mergeWorktree,
+      execImplementation,
+      true,
+    );
+    if (finalCommit.code !== 0 && !finalCommit.stderr.includes("nothing to commit")) {
+      throw new Error(`git commit failed after merging all branches: ${finalCommit.stderr || finalCommit.stdout}`);
+    }
   }
 
   const touchedFiles = await collectTouchedFiles(context.baseBranch, mergeWorktree, execImplementation);

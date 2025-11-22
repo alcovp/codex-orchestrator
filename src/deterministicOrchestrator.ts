@@ -135,6 +135,7 @@ export async function runDeterministicOrchestrator(
     baseBranch,
     jobId: options.jobId,
     taskDescription: options.userTask,
+    userTask: options.userTask,
   });
   const projectRoot = context.repoRoot;
 

@@ -88,6 +88,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     baseBranch,
     jobId: options.jobId,
     taskDescription: options.taskDescription,
+    userTask: options.taskDescription,
   });
 
   try {

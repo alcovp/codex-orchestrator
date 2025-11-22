@@ -180,6 +180,7 @@ test("codexMergeResults invokes Codex for conflicts but keeps git pointer intact
   const calls: Array<{ program: string; args?: string[]; cwd?: string; label?: string }> = [];
   let codexCalled = false;
   let resolved = false;
+  let stagedConflicts = false;
 
   setMergeExecImplementation(async ({ program, args, cwd, label }) => {
     calls.push({ program, args, cwd, label });
@@ -190,13 +191,18 @@ test("codexMergeResults invokes Codex for conflicts but keeps git pointer intact
       if (args?.[0] === "branch") return { stdout: "", stderr: "" };
       if (args?.[0] === "worktree") return { stdout: "", stderr: "" };
       if (args?.[0] === "merge") return { stdout: "", stderr: "" };
-      if (args?.[0] === "diff" && args[2] === "--diff-filter=U") {
-        return { stdout: resolved ? "" : "conflict.txt\n", stderr: "" };
+      if (args?.[0] === "status") {
+        const hasConflict = !(resolved && stagedConflicts);
+        return { stdout: hasConflict ? "UU conflict.txt\n" : "", stderr: "" };
       }
       if (args?.[0] === "diff" && args[1] === "--name-only" && args[2]?.includes("...")) {
         return { stdout: "conflict.txt\n", stderr: "" };
       }
-      if (args?.[0] === "add" || args?.[0] === "commit") return { stdout: "", stderr: "" };
+      if (args?.[0] === "add") {
+        if (args?.[1] === "conflict.txt") stagedConflicts = true;
+        return { stdout: "", stderr: "" };
+      }
+      if (args?.[0] === "commit") return { stdout: "", stderr: "" };
       return { stdout: "", stderr: "" };
     }
     if (program === "codex") {

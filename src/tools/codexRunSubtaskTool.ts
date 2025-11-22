@@ -331,7 +331,11 @@ export async function codexRunSubtask(
   }
 
   const userTaskContextRaw =
-    params.subtask.context ?? params.user_task ?? runContext?.context?.taskDescription ?? "";
+    params.subtask.context ??
+    params.user_task ??
+    runContext?.context?.userTask ??
+    runContext?.context?.taskDescription ??
+    "";
   const userTaskContext = typeof userTaskContextRaw === "string" ? userTaskContextRaw.trim() : "";
   const prompt = buildSubtaskPrompt(params.subtask, userTaskContext);
   let stdout = "";
