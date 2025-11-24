@@ -26,6 +26,7 @@ const MergeInputSchema = z.object({
     .nullable(),
   base_branch: z.string().optional().nullable(),
   result_branch: z.string().describe("Result branch name (e.g., result-<jobId>).").optional().nullable(),
+  push_result: z.boolean().optional().nullable(),
   subtasks_results: z
     .array(
       z.object({
@@ -417,16 +418,21 @@ export async function codexMergeResults(
   const contextJobId = runContext?.context?.jobId;
   const contextBaseBranch = runContext?.context?.baseBranch;
   const contextResultBranch = runContext?.context?.resultBranch;
+  const contextPushResult = runContext?.context?.pushResult;
   const userTask = runContext?.context?.userTask ?? runContext?.context?.taskDescription ?? "";
 
   const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined);
   const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH;
+  const pushResult = Boolean(
+    contextPushResult ?? (typeof params.push_result === "boolean" ? params.push_result : undefined) ?? false,
+  );
   const context = buildOrchestratorContext({
     repoRoot,
     jobId: resolvedJobId,
     baseBranch,
     taskDescription: runContext?.context?.taskDescription,
     userTask,
+    pushResult,
   });
 
   const resultBranch = sanitizeBranchName(
@@ -491,9 +497,24 @@ export async function codexMergeResults(
 
   const touchedFiles = await collectTouchedFiles(context.baseBranch, mergeWorktree, execImplementation);
   const hadConflicts = mergeSummaries.some((s) => s.conflicts.length > 0);
-  const notes = hadConflicts
+  const notesBase = hadConflicts
     ? `Merged ${mergeSummaries.length} branches; conflicts were resolved via Codex where needed.`
     : `Merged ${mergeSummaries.length} branches without conflicts.`;
+
+  let pushNotes = "";
+  if (context.pushResult) {
+    const pushOutcome = await runGit(
+      ["push", "-u", "origin", resultBranch],
+      mergeWorktree,
+      execImplementation,
+      true,
+    );
+    if (pushOutcome.code !== 0) {
+      throw new Error(`git push failed for ${resultBranch}: ${pushOutcome.stderr || pushOutcome.stdout}`);
+    }
+    pushNotes = ` Pushed ${resultBranch} to origin.`;
+  }
+  const notes = `${notesBase}${pushNotes}`;
 
   return {
     status: "ok",

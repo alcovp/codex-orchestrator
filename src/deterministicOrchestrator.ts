@@ -28,6 +28,7 @@ export interface DeterministicOrchestratorOptions {
   repoRoot?: string;
   baseBranch?: string;
   jobId?: string;
+  pushResult?: boolean;
 }
 
 export interface SubtaskRunOutput {
@@ -136,6 +137,7 @@ export async function runDeterministicOrchestrator(
     jobId: options.jobId,
     taskDescription: options.userTask,
     userTask: options.userTask,
+    pushResult: options.pushResult,
   });
   const projectRoot = context.repoRoot;
 
@@ -181,6 +183,7 @@ export async function runDeterministicOrchestrator(
       job_id: context.jobId,
       base_branch: context.baseBranch,
       result_branch: context.resultBranch,
+      push_result: context.pushResult,
       subtasks_results: subtaskResults.map((r) => {
         if (!r.result.branch) {
           throw new Error(`Missing branch for subtask ${r.subtask.id}`);

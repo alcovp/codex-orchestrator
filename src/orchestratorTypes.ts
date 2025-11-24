@@ -41,6 +41,10 @@ export interface OrchestratorContext {
    * Raw user task text for this run (same as taskDescription, kept for clarity).
    */
   userTask: string;
+  /**
+   * Whether the orchestrator should push the merged result branch to origin.
+   */
+  pushResult: boolean;
 }
 
 export const DEFAULT_BASE_BRANCH = "main";
@@ -84,6 +88,7 @@ export function buildOrchestratorContext(options: {
   baseBranch?: string;
   taskDescription?: string;
   userTask?: string;
+  pushResult?: boolean;
 }): OrchestratorContext {
   const repoRoot = resolveRepoRoot(options.repoRoot ?? options.baseDir);
   const jobId = resolveJobId(options.jobId);
@@ -106,5 +111,6 @@ export function buildOrchestratorContext(options: {
     resultWorktree,
     taskDescription,
     userTask,
+    pushResult: Boolean(options.pushResult),
   };
 }

@@ -165,6 +165,73 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
   }
 });
 
+test("codexMergeResults pushes result branch when enabled", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-push-"));
+  const projectRoot = path.join(baseDir, "repo");
+  await mkdir(projectRoot, { recursive: true });
+
+  const jobId = "job-push";
+  const context = buildOrchestratorContext({
+    repoRoot: projectRoot,
+    jobId,
+    baseBranch: "main",
+    pushResult: true,
+  });
+  const mergeWorktree = context.resultWorktree;
+  const resultBranch = context.resultBranch;
+
+  let pushCalled = false;
+
+  setMergeExecImplementation(async ({ program, args }) => {
+    if (program !== "git") {
+      throw new Error("codex should not run in push test");
+    }
+
+    if (args[0] === "rev-parse") {
+      throw Object.assign(new Error("missing branch"), { code: 1, stderr: "missing" });
+    }
+    if (args[0] === "branch") return { stdout: "", stderr: "" };
+    if (args[0] === "worktree") {
+      await mkdir(mergeWorktree, { recursive: true });
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "merge") return { stdout: "", stderr: "" };
+    if (args[0] === "status") return { stdout: "", stderr: "" };
+    if (args[0] === "add" || args[0] === "commit") return { stdout: "", stderr: "" };
+    if (args[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "diff" && args[1] === "--name-only" && args[2]?.includes("...")) {
+      return { stdout: "merged.txt\n", stderr: "" };
+    }
+    if (args[0] === "push") {
+      pushCalled = true;
+      return { stdout: "pushed", stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  });
+
+  try {
+    const result = await codexMergeResults(
+      {
+        project_root: projectRoot,
+        job_id: jobId,
+        base_branch: "main",
+        result_branch: resultBranch,
+        push_result: true,
+        subtasks_results: [{ subtask_id: "s1", worktree_path: projectRoot, branch: "feature", summary: "done" }],
+      },
+      { context } as any,
+    );
+
+    assert.equal(result.status, "ok");
+    assert.ok(pushCalled, "git push should be called when push_result is enabled");
+    assert.match(result.notes, /pushed/i);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("codexMergeResults invokes Codex for conflicts but keeps git pointer intact", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-conflicts-"));
   const projectRoot = path.join(baseDir, "repo");
