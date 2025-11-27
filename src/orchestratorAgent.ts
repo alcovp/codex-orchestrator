@@ -12,6 +12,7 @@ import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
 import { resolveBaseBranch } from "./baseBranch.js";
 import { appendJobLog, setJobLogPath } from "./jobLogger.js";
+import { resolveDbPath } from "./db/orchestratorDb.js";
 
 export interface OrchestratorRunOptions {
   /**
@@ -106,8 +107,21 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
   const jobLogPath = path.join(context.jobsRoot, "orchestrator.log");
   await mkdir(context.jobsRoot, { recursive: true });
   setJobLogPath(jobLogPath);
+  const dbPath = resolveDbPath();
+
+  const header = [
+    `[orchestrator] job ${context.jobId}`,
+    `repo=${context.repoRoot}`,
+    `base_branch=${context.baseBranch}`,
+    `db=${dbPath}`,
+    `log=${jobLogPath}`,
+  ].join(" | ");
+  console.log(header);
+  await appendJobLog(header);
 
   try {
+    console.log(`[orchestrator] planning with codex_plan_task...`);
+    await appendJobLog("planning: start codex_plan_task");
     const result = await runImplementation(orchestratorAgent, options.taskDescription, {
       context,
       maxTurns: 30,

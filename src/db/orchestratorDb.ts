@@ -65,12 +65,18 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
-async function loadDb(repoRoot: string): Promise<Low<DbData>> {
-  const existing = dbCache.get(repoRoot);
+export function resolveDbPath(): string {
+  const fromEnv = process.env.ORCHESTRATOR_DB_PATH;
+  if (fromEnv?.trim()) return path.resolve(fromEnv.trim());
+  return path.resolve(process.cwd(), DB_FILENAME);
+}
+
+async function loadDb(): Promise<Low<DbData>> {
+  const dbPath = resolveDbPath();
+  const existing = dbCache.get(dbPath);
   if (existing) return existing;
 
   const created = (async () => {
-    const dbPath = path.resolve(repoRoot, DB_FILENAME);
     await mkdir(path.dirname(dbPath), { recursive: true });
     const adapter = new JSONFile<DbData>(dbPath);
     const db = new Low<DbData>(adapter, { jobs: [] });
@@ -80,7 +86,7 @@ async function loadDb(repoRoot: string): Promise<Low<DbData>> {
     return db;
   })();
 
-  dbCache.set(repoRoot, created);
+  dbCache.set(dbPath, created);
   return created;
 }
 
@@ -154,7 +160,7 @@ export async function recordPlannerOutput(params: {
   userTask: string;
 }) {
   try {
-    const db = await loadDb(params.context.repoRoot);
+    const db = await loadDb();
     const job = upsertJob(db, params.context);
     job.status = "planning";
     job.plan = params.plan;
@@ -183,7 +189,7 @@ export async function recordSubtaskStart(params: {
   branchName: string;
 }) {
   try {
-    const db = await loadDb(params.context.repoRoot);
+    const db = await loadDb();
     const job = upsertJob(db, params.context);
     job.status = "running";
     const record = ensureSubtask(job, params.subtask);
@@ -209,7 +215,7 @@ export async function recordSubtaskResult(params: {
   errorMessage?: string;
 }) {
   try {
-    const db = await loadDb(params.context.repoRoot);
+    const db = await loadDb();
     const job = upsertJob(db, params.context);
     const record = ensureSubtask(job, params.subtask);
     const now = isoNow();
@@ -243,7 +249,7 @@ export async function recordMergeStart(params: {
   mergeInput: CodexMergeResultsInput;
 }) {
   try {
-    const db = await loadDb(params.context.repoRoot);
+    const db = await loadDb();
     const job = upsertJob(db, params.context);
     const now = isoNow();
     job.status = "merging";
@@ -266,7 +272,7 @@ export async function recordMergeResult(params: {
   mergeResult: CodexMergeResultsResult;
 }) {
   try {
-    const db = await loadDb(params.context.repoRoot);
+    const db = await loadDb();
     const job = upsertJob(db, params.context);
     const now = isoNow();
     job.status =

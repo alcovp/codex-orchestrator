@@ -2,11 +2,12 @@ import express from "express";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { resolveDbPath } from "./db/orchestratorDb.js";
 
 const PORT = Number(process.env.DASHBOARD_PORT || 4179);
 const repoRoot = process.cwd();
 const distDir = path.resolve(repoRoot, "web", "dist");
-const dbPath = path.resolve(repoRoot, "orchestrator-db.json");
+const dbPath = resolveDbPath();
 
 const app = express();
 

@@ -17,3 +17,4 @@ dist/
 /run_repo_command.log
 dispatcher.log
 debug/
+/orchestrator-db.json
