@@ -12,7 +12,7 @@ import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js"
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js"
 import { resolveBaseBranch } from "./baseBranch.js"
 import { appendJobLog, setJobLogPath } from "./jobLogger.js"
-import { resolveDbPath, markJobStatus } from "./db/sqliteDb.js"
+import { resolveDbPath, markJobStatus, recordMergeResult } from "./db/sqliteDb.js"
 
 export interface OrchestratorRunOptions {
     /**
@@ -92,6 +92,19 @@ export function setRunImplementationForTesting(fn: RunImplementation) {
     runImplementation = fn
 }
 
+function parseLastJsonObject(text: string): any | null {
+    const candidates = text.match(/{[\s\S]*}/g)
+    if (!candidates || candidates.length === 0) return null
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+        try {
+            return JSON.parse(candidates[i])
+        } catch {
+            continue
+        }
+    }
+    return null
+}
+
 export async function runOrchestrator(options: OrchestratorRunOptions): Promise<string> {
     const repoRoot = resolveRepoRoot(options.repoRoot ?? options.baseDir)
     const baseBranch = await resolveBaseBranch({ repoRoot, explicitBranch: options.baseBranch })
@@ -122,22 +135,34 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     try {
         console.log(`[orchestrator] planning with codex_plan_task...`)
         await appendJobLog("planning: start codex_plan_task")
-    const result = await runImplementation(orchestratorAgent, options.taskDescription, {
-        context,
-        maxTurns: 30,
-    })
-    const output = result.finalOutput ?? ""
-    await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`)
-    markJobStatus(context, "done")
-    return output
-} catch (error) {
-    console.error("Failed to run orchestrator agent:", error)
-    if (error instanceof Error) {
-        await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
-        markJobStatus(context, "failed")
+        const result = await runImplementation(orchestratorAgent, options.taskDescription, {
+            context,
+            maxTurns: 30,
+        })
+        const output = result.finalOutput ?? ""
+        await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`)
+        try {
+            const parsed = parseLastJsonObject(output)
+            if (parsed && parsed.status && parsed.touched_files) {
+                await recordMergeResult({ context, mergeResult: parsed })
+                const status =
+                    parsed.status === "needs_manual_review" ? "needs_manual_review" : "done"
+                markJobStatus(context, status)
+            } else {
+                markJobStatus(context, "done")
+            }
+        } catch {
+            markJobStatus(context, "done")
+        }
+        return output
+    } catch (error) {
+        console.error("Failed to run orchestrator agent:", error)
+        if (error instanceof Error) {
+            await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
+            markJobStatus(context, "failed")
+        }
+        throw error
+    } finally {
+        setJobLogPath(null)
     }
-    throw error
-} finally {
-    setJobLogPath(null)
-}
 }
