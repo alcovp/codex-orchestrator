@@ -90,6 +90,40 @@ function logDbError(message: string, error: unknown) {
     ).catch(() => {})
 }
 
+export function markJobStatus(context: OrchestratorContext, status: JobStatus) {
+    try {
+        const row = db()
+            .prepare("SELECT status FROM jobs WHERE job_id = ?")
+            .get(context.jobId) as { status?: string } | undefined
+
+        const current = row?.status as JobStatus | undefined
+        if (!current) {
+            upsertJob(context, status)
+            return
+        }
+
+        const priority: Record<JobStatus, number> = {
+            failed: 3,
+            needs_manual_review: 2,
+            done: 1,
+            merging: 0,
+            running: 0,
+            planning: 0,
+        }
+
+        if (priority[status] < priority[current]) return
+
+        const now = isoNow()
+        db()
+            .prepare(
+                `UPDATE jobs SET status = @status, updated_at = @updated_at WHERE job_id = @job_id`,
+            )
+            .run({ job_id: context.jobId, status, updated_at: now })
+    } catch (error) {
+        logDbError("markJobStatus failed", error)
+    }
+}
+
 function upsertJob(context: OrchestratorContext, status: JobStatus) {
     const now = isoNow()
     const stmt = db().prepare(

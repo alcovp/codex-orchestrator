@@ -12,7 +12,7 @@ import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js"
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js"
 import { resolveBaseBranch } from "./baseBranch.js"
 import { appendJobLog, setJobLogPath } from "./jobLogger.js"
-import { resolveDbPath } from "./db/sqliteDb.js"
+import { resolveDbPath, markJobStatus } from "./db/sqliteDb.js"
 
 export interface OrchestratorRunOptions {
     /**
@@ -122,20 +122,22 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     try {
         console.log(`[orchestrator] planning with codex_plan_task...`)
         await appendJobLog("planning: start codex_plan_task")
-        const result = await runImplementation(orchestratorAgent, options.taskDescription, {
-            context,
-            maxTurns: 30,
-        })
-        const output = result.finalOutput ?? ""
-        await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`)
-        return output
-    } catch (error) {
-        console.error("Failed to run orchestrator agent:", error)
-        if (error instanceof Error) {
-            await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
-        }
-        throw error
-    } finally {
-        setJobLogPath(null)
+    const result = await runImplementation(orchestratorAgent, options.taskDescription, {
+        context,
+        maxTurns: 30,
+    })
+    const output = result.finalOutput ?? ""
+    await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`)
+    markJobStatus(context, "done")
+    return output
+} catch (error) {
+    console.error("Failed to run orchestrator agent:", error)
+    if (error instanceof Error) {
+        await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
+        markJobStatus(context, "failed")
     }
+    throw error
+} finally {
+    setJobLogPath(null)
+}
 }
