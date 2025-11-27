@@ -1,7 +1,6 @@
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import path from "node:path"
-import { readFile } from "node:fs/promises"
 
 export default defineConfig({
     root: path.resolve(__dirname),
@@ -12,6 +11,10 @@ export default defineConfig({
             "/api": {
                 target: "http://localhost:4179",
                 changeOrigin: true,
+            },
+            "/ws": {
+                target: "ws://localhost:4179",
+                ws: true,
             },
         },
     },

@@ -1098,7 +1098,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/ws@npm:^8.18.1":
+"@types/ws@npm:^8.18.1, @types/ws@npm:^8.5.12":
   version: 8.18.1
   resolution: "@types/ws@npm:8.18.1"
   dependencies:
@@ -1420,6 +1420,7 @@ __metadata:
     "@types/node": "npm:^24.10.1"
     "@types/react": "npm:^18.3.11"
     "@types/react-dom": "npm:^18.3.0"
+    "@types/ws": "npm:^8.5.12"
     "@vitejs/plugin-react": "npm:^4.3.3"
     better-sqlite3: "npm:^11.7.0"
     express: "npm:^4.19.2"
@@ -1429,6 +1430,7 @@ __metadata:
     tsx: "npm:^4.20.6"
     typescript: "npm:^5.9.3"
     vite: "npm:^5.4.9"
+    ws: "npm:^8.18.0"
     zod: "npm:^4.1.12"
   languageName: unknown
   linkType: soft
@@ -3772,7 +3774,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ws@npm:^8.18.1":
+"ws@npm:^8.18.0, ws@npm:^8.18.1":
   version: 8.18.3
   resolution: "ws@npm:8.18.3"
   peerDependencies:

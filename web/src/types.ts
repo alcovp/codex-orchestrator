@@ -26,6 +26,7 @@ export interface SubtaskRecord {
     branch?: string
     summary?: string
     important_files?: string[]
+    last_reasoning?: string
     error?: string
     startedAt?: string
     finishedAt?: string

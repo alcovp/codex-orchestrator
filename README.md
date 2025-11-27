@@ -103,10 +103,10 @@ yarn orchestrator "Refactor billing module and add tests"
 
 ## Dashboard
 
-- Веб-панель лежит в `web/` (React + Vite). API читает `orchestrator-db.json`.
-- Запуск разработки фронта: `yarn web:dev` (по умолчанию http://localhost:5173, прокси `/api` идёт на `yarn dashboard` — поднимите сервер параллельно для данных).
+- Веб-панель лежит в `web/` (React + Vite). API читает `orchestrator.db`.
+- Запуск разработки фронта: `yarn web:dev` (по умолчанию http://localhost:5173, прокси `/api` и `/ws` идут на `yarn dashboard` — поднимите сервер параллельно для данных).
 - Сборка фронта: `yarn web:build` (результат в `web/dist`).
-- Сервер дашборда (Express: статика + `/api/db`): `yarn dashboard` (порт `DASHBOARD_PORT` по умолчанию 4179). В прод-сборке `/api/db` обслуживается этим сервером; если статики нет, вернёт подсказку собрать фронт.
+- Сервер дашборда (Express: статика + `/api/db` + WebSocket `/ws`): `yarn dashboard` (порт `DASHBOARD_PORT` по умолчанию 4179). Если статики нет, вернёт подсказку собрать фронт. `/ws` стримит активный (не финальный) джоб для живого обновления UI.
 
 ## Использование как библиотеки
 

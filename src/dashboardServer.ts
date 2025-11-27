@@ -1,7 +1,8 @@
 import express from "express"
 import path from "node:path"
 import { existsSync } from "node:fs"
-import { readDashboardData, resolveDbPath } from "./db/sqliteDb.js"
+import { WebSocketServer } from "ws"
+import { readActiveJob, readDashboardData, resolveDbPath } from "./db/sqliteDb.js"
 
 const PORT = Number(process.env.DASHBOARD_PORT || 4179)
 const repoRoot = process.cwd()
@@ -49,8 +50,45 @@ if (existsSync(distDir)) {
     })
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`[dashboard] Listening on http://localhost:${PORT}`)
     console.log(`[dashboard] Serving static files from ${distDir}`)
     console.log(`[dashboard] DB path ${dbPath}`)
 })
+
+const wss = new WebSocketServer({ server, path: "/ws" })
+
+function buildActiveJobPayload() {
+    const job = readActiveJob()
+    return JSON.stringify({ type: "active_job", job })
+}
+
+let lastPayload = ""
+const broadcast = (data: string) => {
+    wss.clients.forEach((client) => {
+        if (client.readyState === client.OPEN) {
+            client.send(data)
+        }
+    })
+}
+
+wss.on("connection", (socket) => {
+    try {
+        const initial = buildActiveJobPayload()
+        socket.send(initial)
+    } catch {
+        // ignore send errors
+    }
+})
+
+setInterval(() => {
+    try {
+        const payload = buildActiveJobPayload()
+        if (payload !== lastPayload) {
+            lastPayload = payload
+            broadcast(payload)
+        }
+    } catch {
+        // swallow polling errors
+    }
+}, 1000)

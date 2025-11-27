@@ -39,6 +39,8 @@ export interface CodexExecOptions {
     cwd: string
     label?: string
     captureLimit?: number
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
 }
 
 export async function runWithCodexTee(
@@ -85,6 +87,8 @@ export async function runWithCodexTee(
                 target.write(`${makeLogLine(taggedLine)}\n`)
             }
             appendJobLogSafe(taggedLine)
+            if (kind === "stdout" && options.onStdoutLine) options.onStdoutLine(line)
+            if (kind === "stderr" && options.onStderrLine) options.onStderrLine(line)
         }
 
         const handleData = (kind: "stdout" | "stderr") => (data: Buffer) => {
@@ -112,8 +116,8 @@ export async function runWithCodexTee(
         child.stderr?.on("data", handleData("stderr"))
 
         child.on("error", (error) => {
-            if (lineBuffers.stdout) emitLine("stdout", lineBuffers.stdout)
-            if (lineBuffers.stderr) emitLine("stderr", lineBuffers.stderr)
+      if (lineBuffers.stdout) emitLine("stdout", lineBuffers.stdout)
+      if (lineBuffers.stderr) emitLine("stderr", lineBuffers.stderr)
             if (tee) {
                 console.error(makeLogLine(`failed to start: ${error?.message ?? String(error)}`))
             } else {

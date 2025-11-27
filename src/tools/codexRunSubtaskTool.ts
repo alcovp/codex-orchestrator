@@ -12,7 +12,11 @@ import {
 } from "../orchestratorTypes.js"
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js"
 import { appendJobLog } from "../jobLogger.js"
-import { recordSubtaskResult, recordSubtaskStart } from "../db/sqliteDb.js"
+import {
+    recordSubtaskResult,
+    recordSubtaskStart,
+    recordSubtaskReasoning,
+} from "../db/sqliteDb.js"
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024
@@ -68,9 +72,11 @@ type SubtaskExec = (args: {
     args: string[]
     cwd: string
     label?: string
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
 }) => Promise<{ stdout: string; stderr: string }>
 
-const defaultExec: SubtaskExec = async ({ program, args, cwd, label }) => {
+const defaultExec: SubtaskExec = async ({ program, args, cwd, label, onStdoutLine, onStderrLine }) => {
     if (program === "codex") {
         return runWithCodexTee({
             command: program,
@@ -78,6 +84,8 @@ const defaultExec: SubtaskExec = async ({ program, args, cwd, label }) => {
             cwd,
             label: label ?? "codex-subtask",
             captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+            onStdoutLine,
+            onStderrLine,
         })
     }
 
@@ -399,12 +407,37 @@ export async function codexRunSubtask(
     console.log(startMessage)
     appendJobLog(startMessage).catch(() => {})
 
+    const reasoningLines: string[] = []
+    let lastFlush = 0
+    const flushReasoning = (force = false) => {
+        const now = Date.now()
+        if (!force && now - lastFlush < 1000) return
+        lastFlush = now
+        const payload = reasoningLines.slice(-8).join("\n")
+        if (payload) {
+            recordSubtaskReasoning({
+                context,
+                subtaskId: params.subtask.id,
+                reasoning: payload,
+            })
+        }
+    }
+    const captureReasoning = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        reasoningLines.push(trimmed)
+        if (reasoningLines.length > 20) reasoningLines.splice(0, reasoningLines.length - 20)
+        flushReasoning()
+    }
+
     try {
         const result = await execImplementation({
             program: "codex",
             args: ["exec", "--full-auto", prompt],
             cwd: worktreeDir,
             label: `codex-subtask:${params.subtask.id}`,
+            onStdoutLine: captureReasoning,
+            onStderrLine: captureReasoning,
         })
         stdout = result.stdout ?? ""
         stderr = result.stderr ?? ""
@@ -416,6 +449,7 @@ export async function codexRunSubtask(
             jobId: context.jobId,
             summary: parsed.summary,
         })
+        flushReasoning(true)
         await recordSubtaskResult({
             context,
             subtask: params.subtask,
@@ -435,20 +469,21 @@ export async function codexRunSubtask(
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
         try {
             const parsed = normalizeOutput(extractLastJsonObject(`${stdout}\n${stderr}`))
-            await commitIfNeeded({
-                cwd: worktreeDir,
-                exec: execImplementation,
-                subtaskId: params.subtask.id,
-                jobId: context.jobId,
-                summary: parsed.summary,
-            })
-            await recordSubtaskResult({
-                context,
-                subtask: params.subtask,
-                worktreePath: worktreeDir,
-                branchName,
-                result: parsed,
-            })
+        await commitIfNeeded({
+            cwd: worktreeDir,
+            exec: execImplementation,
+            subtaskId: params.subtask.id,
+            jobId: context.jobId,
+            summary: parsed.summary,
+        })
+        flushReasoning(true)
+        await recordSubtaskResult({
+            context,
+            subtask: params.subtask,
+            worktreePath: worktreeDir,
+            branchName,
+            result: parsed,
+        })
             const finishMessage = `${subtaskLabel} finished (${parsed.status})`
             console.log(finishMessage)
             appendJobLog(finishMessage).catch(() => {})
@@ -457,14 +492,15 @@ export async function codexRunSubtask(
                 branch: parsed.branch || branchName || undefined,
             }
         } catch (error: any) {
-            const failMessage = `${subtaskLabel} failed`
-            console.log(failMessage)
-            appendJobLog(failMessage).catch(() => {})
-            await recordSubtaskResult({
-                context,
-                subtask: params.subtask,
-                worktreePath: worktreeDir,
-                branchName,
+        const failMessage = `${subtaskLabel} failed`
+        console.log(failMessage)
+        appendJobLog(failMessage).catch(() => {})
+        flushReasoning(true)
+        await recordSubtaskResult({
+            context,
+            subtask: params.subtask,
+            worktreePath: worktreeDir,
+            branchName,
                 result: {
                     subtask_id: params.subtask.id,
                     status: "failed",

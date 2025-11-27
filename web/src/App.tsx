@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { DbShape, JobRecord, SubtaskRecord } from "./types"
 
 type LoadState = "idle" | "loading" | "error" | "ready"
@@ -18,29 +18,78 @@ function useDashboardData() {
     const [state, setState] = useState<LoadState>("idle")
     const [data, setData] = useState<DbShape>({ jobs: [] })
     const [error, setError] = useState<string | null>(null)
+    const wsRef = useRef<WebSocket | null>(null)
+    const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [reloadKey, setReloadKey] = useState(0)
+    const [attempt, setAttempt] = useState(0)
 
-    const fetchData = async () => {
-        setState("loading")
-        setError(null)
-        try {
-            const res = await fetch("/api/db")
-            if (!res.ok) throw new Error(`HTTP ${res.status}`)
-            const json = (await res.json()) as DbShape
-            setData(json)
-            setState("ready")
-        } catch (err: any) {
-            setError(err?.message ?? "Failed to load data")
-            setState("error")
-        }
-    }
-
+    // Initial/full fetch
     useEffect(() => {
+        const fetchData = async () => {
+            setState("loading")
+            setError(null)
+            try {
+                const res = await fetch("/api/db")
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                const json = (await res.json()) as DbShape
+                setData(json)
+                setState("ready")
+            } catch (err: any) {
+                setError(err?.message ?? "Failed to load data")
+                setState("error")
+            }
+        }
         fetchData()
-        const id = setInterval(fetchData, 5000)
-        return () => clearInterval(id)
-    }, [])
+    }, [reloadKey])
 
-    return { state, data, error, reload: fetchData }
+    // Live updates via WS (active job only)
+    useEffect(() => {
+        const url =
+            (location.protocol === "https:" ? "wss://" : "ws://") +
+            location.host +
+            "/ws"
+
+        const ws = new WebSocket(url)
+        wsRef.current = ws
+
+        ws.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data)
+                if (payload.type === "active_job") {
+                    const job = payload.job as JobRecord | null
+                    setData((prev) => {
+                        const others = prev.jobs.filter((j) => j.jobId !== job?.jobId)
+                        return job ? { jobs: [...others, job] } : { jobs: others }
+                    })
+                    setState((prev) => (prev === "idle" ? "ready" : prev))
+                    setError(null)
+                }
+            } catch (err: any) {
+                setError(err?.message ?? "Failed to parse WS message")
+            }
+        }
+
+        ws.onerror = () => {
+            setError("WebSocket error")
+        }
+
+        ws.onclose = () => {
+            if (retryRef.current) clearTimeout(retryRef.current)
+            retryRef.current = setTimeout(() => {
+                setAttempt((v) => v + 1)
+            }, 1500)
+        }
+
+        return () => {
+            if (retryRef.current) clearTimeout(retryRef.current)
+            wsRef.current?.close()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [attempt])
+
+    const reload = () => setReloadKey((v) => v + 1)
+
+    return { state, data, error, reload }
 }
 
 function StatusPill({ label }: { label: string }) {
@@ -114,6 +163,9 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
                     )}
                 </div>
                 {subtask.summary && <div className="node-summary">{subtask.summary}</div>}
+                {subtask.last_reasoning && (
+                    <div className="node-reasoning">Thoughts: {subtask.last_reasoning}</div>
+                )}
             </div>
         </div>
     )

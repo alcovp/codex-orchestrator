@@ -62,6 +62,7 @@ function migrate(database: Database.Database) {
       summary TEXT,
       important_files TEXT,
       error TEXT,
+      last_reasoning TEXT,
       started_at TEXT,
       finished_at TEXT,
       updated_at TEXT NOT NULL,
@@ -79,6 +80,11 @@ function migrate(database: Database.Database) {
       FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
     );
   `)
+    try {
+        database.exec(`ALTER TABLE subtasks ADD COLUMN last_reasoning TEXT`)
+    } catch {
+        // column may already exist
+    }
 }
 
 const isoNow = () => new Date().toISOString()
@@ -121,6 +127,28 @@ export function markJobStatus(context: OrchestratorContext, status: JobStatus) {
             .run({ job_id: context.jobId, status, updated_at: now })
     } catch (error) {
         logDbError("markJobStatus failed", error)
+    }
+}
+
+export function recordSubtaskReasoning(params: {
+    context: OrchestratorContext
+    subtaskId: string
+    reasoning: string
+}) {
+    try {
+        const now = isoNow()
+        db()
+            .prepare(
+                `UPDATE subtasks SET last_reasoning=@reasoning, updated_at=@updated_at WHERE job_id=@job_id AND subtask_id=@subtask_id`,
+            )
+            .run({
+                job_id: params.context.jobId,
+                subtask_id: params.subtaskId,
+                reasoning: params.reasoning,
+                updated_at: now,
+            })
+    } catch (error) {
+        logDbError("recordSubtaskReasoning failed", error)
     }
 }
 
@@ -264,8 +292,8 @@ export function recordSubtaskResult(params: {
             db()
                 .prepare(
                     `
-          INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, worktree, branch, summary, important_files, error, started_at, finished_at, updated_at)
-          VALUES (@job_id, @subtask_id, @title, @description, @parallel_group, @status, @worktree, @branch, @summary, @important_files, @error, @started_at, @finished_at, @updated_at)
+          INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, worktree, branch, summary, important_files, error, last_reasoning, started_at, finished_at, updated_at)
+          VALUES (@job_id, @subtask_id, @title, @description, @parallel_group, @status, @worktree, @branch, @summary, @important_files, @error, @last_reasoning, @started_at, @finished_at, @updated_at)
           ON CONFLICT(job_id, subtask_id) DO UPDATE SET
             title=excluded.title,
             description=excluded.description,
@@ -276,6 +304,7 @@ export function recordSubtaskResult(params: {
             summary=excluded.summary,
             important_files=excluded.important_files,
             error=excluded.error,
+            last_reasoning=excluded.last_reasoning,
             started_at=COALESCE(subtasks.started_at, excluded.started_at),
             finished_at=excluded.finished_at,
             updated_at=excluded.updated_at
@@ -293,6 +322,7 @@ export function recordSubtaskResult(params: {
                     summary: params.result.summary,
                     important_files: JSON.stringify(params.result.important_files ?? []),
                     error: params.errorMessage ?? null,
+                    last_reasoning: null,
                     started_at: now,
                     finished_at: now,
                     updated_at: now,
@@ -399,6 +429,7 @@ export function readDashboardData(): {
             summary?: string
             important_files?: string[]
             error?: string
+            last_reasoning?: string
             startedAt?: string
             finishedAt?: string
             updatedAt: string
@@ -446,6 +477,7 @@ export function readDashboardData(): {
                     ? (JSON.parse(row.important_files) as string[])
                     : [],
                 error: row.error ?? undefined,
+                last_reasoning: row.last_reasoning ?? undefined,
                 startedAt: row.started_at ?? undefined,
                 finishedAt: row.finished_at ?? undefined,
                 updatedAt: row.updated_at as string,
@@ -479,5 +511,76 @@ export function readDashboardData(): {
     } catch (error) {
         logDbError("readDashboardData failed", error)
         return { jobs: [] }
+    }
+}
+
+export function readActiveJob():
+    | ReturnType<typeof readDashboardData>["jobs"][number]
+    | null {
+    try {
+        const job = db()
+            .prepare(
+                "SELECT * FROM jobs WHERE status NOT IN ('done','failed','needs_manual_review') ORDER BY started_at DESC LIMIT 1",
+            )
+            .get() as any
+        if (!job) return null
+
+        const artifacts = db()
+            .prepare("SELECT * FROM artifacts WHERE job_id = ? ORDER BY created_at DESC")
+            .all(job.job_id)
+            .map((row: any) => ({
+                jobId: row.job_id as string,
+                id: row.id as string,
+                type: row.type as string,
+                label: row.label ?? undefined,
+                subtaskId: row.subtask_id ?? undefined,
+                createdAt: row.created_at as string,
+                data: JSON.parse(row.data as string),
+            }))
+
+        const subtasks = db()
+            .prepare("SELECT * FROM subtasks WHERE job_id = ?")
+            .all(job.job_id)
+            .map((row: any) => ({
+                jobId: row.job_id as string,
+                id: row.subtask_id as string,
+                title: row.title as string,
+                description: row.description ?? undefined,
+                parallel_group: row.parallel_group ?? undefined,
+                status: row.status as SubtaskStatus,
+                worktree: row.worktree ?? undefined,
+                branch: row.branch ?? undefined,
+                summary: row.summary ?? undefined,
+                important_files: row.important_files
+                    ? (JSON.parse(row.important_files) as string[])
+                    : [],
+                last_reasoning: row.last_reasoning ?? undefined,
+                error: row.error ?? undefined,
+                startedAt: row.started_at ?? undefined,
+                finishedAt: row.finished_at ?? undefined,
+                updatedAt: row.updated_at as string,
+            }))
+
+        return {
+            jobId: job.job_id as string,
+            repoRoot: job.repo_root as string,
+            baseBranch: job.base_branch as string,
+            taskDescription: job.task_description as string,
+            userTask: job.user_task as string,
+            pushResult: Boolean(job.push_result),
+            status: job.status as string,
+            startedAt: job.started_at as string,
+            updatedAt: job.updated_at as string,
+            subtasks,
+            artifacts,
+            plan: artifacts.find((a) => a.type === "plan")?.data as
+                | CodexPlanTaskResult
+                | undefined,
+            mergeResult: artifacts.find((a) => a.type === "merge_result")
+                ?.data as CodexMergeResultsResult | undefined,
+        }
+    } catch (error) {
+        logDbError("readActiveJob failed", error)
+        return null
     }
 }
