@@ -132,6 +132,9 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     console.log(header)
     await appendJobLog(header)
 
+    // Make the job visible immediately in the dashboard before planner finishes.
+    markJobStatus(context, "planning")
+
     try {
         console.log(`[orchestrator] planning with codex_plan_task...`)
         await appendJobLog("planning: start codex_plan_task")
