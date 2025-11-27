@@ -1,4 +1,6 @@
 import { Agent, run } from "@openai/agents";
+import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import {
   buildOrchestratorContext,
   resolveRepoRoot,
@@ -9,6 +11,7 @@ import { codexRunSubtaskTool } from "./tools/codexRunSubtaskTool.js";
 import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
 import { resolveBaseBranch } from "./baseBranch.js";
+import { appendJobLog, setJobLogPath } from "./jobLogger.js";
 
 export interface OrchestratorRunOptions {
   /**
@@ -100,14 +103,25 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     pushResult: options.pushResult,
   });
 
+  const jobLogPath = path.join(context.jobsRoot, "orchestrator.log");
+  await mkdir(context.jobsRoot, { recursive: true });
+  setJobLogPath(jobLogPath);
+
   try {
     const result = await runImplementation(orchestratorAgent, options.taskDescription, {
       context,
       maxTurns: 30,
     });
-    return result.finalOutput ?? "";
+    const output = result.finalOutput ?? "";
+    await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`);
+    return output;
   } catch (error) {
     console.error("Failed to run orchestrator agent:", error);
+    if (error instanceof Error) {
+      await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`);
+    }
     throw error;
+  } finally {
+    setJobLogPath(null);
   }
 }

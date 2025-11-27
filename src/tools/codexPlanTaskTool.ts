@@ -1,9 +1,10 @@
 import { tool, RunContext } from "@openai/agents";
 import { z } from "zod";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { OrchestratorContext } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
+import { appendJobLog } from "../jobLogger.js";
 
 const OUTPUT_TRUNCATE = 2000;
 
@@ -106,6 +107,7 @@ function buildPlannerPrompt(userTask: string): string {
     '- Первое предложение описания явно должно ссылаться на исходный запрос (например, "В контексте запроса <цитата пользователя> сделать ...").',
     "- В описании сохраняй связь с исходным запросом, но чётко указывай, что поручено именно этой подзадаче.",
     "- В каждую подзадачу добавь поле context с исходным запросом пользователя (для понимания), даже если описание уже его упоминает.",
+    "- Поле context должно содержать полный текст user_task без сокращений, многоточий и обрезки.",
     "",
     "Формат ответа — ВАЛИДНЫЙ JSON по схеме:",
     "",
@@ -194,13 +196,17 @@ export async function codexPlanTask(
     const result = await execImplementation({ cwd: projectRoot, prompt, label: "codex-plan" });
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
-    return normalizeOutput(extractJsonObject(stdout || stderr));
+    const plan = normalizeOutput(extractJsonObject(stdout || stderr));
+    await persistPlan(plan, runContext?.context);
+    return plan;
   } catch (error: any) {
     stdout = (error?.stdout ?? stdout ?? "") as string;
     stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string;
 
     try {
-      return normalizeOutput(extractJsonObject(`${stdout}\n${stderr}`));
+      const plan = normalizeOutput(extractJsonObject(`${stdout}\n${stderr}`));
+      await persistPlan(plan, runContext?.context);
+      return plan;
     } catch {
       const parts = [
         "codex_plan_task failed: could not parse planner JSON.",
@@ -223,3 +229,15 @@ export const codexPlanTaskTool = tool({
     return codexPlanTask(params, runContext);
   },
 });
+
+async function persistPlan(plan: CodexPlanTaskResult, context?: OrchestratorContext) {
+  if (!context?.jobsRoot) return;
+  const planPath = path.join(context.jobsRoot, "planner-output.json");
+  try {
+    await mkdir(path.dirname(planPath), { recursive: true });
+    await writeFile(planPath, JSON.stringify(plan, null, 2), "utf8");
+    await appendJobLog(`[planner] saved plan to ${planPath}`);
+  } catch {
+    // Logging should not break orchestrator flow.
+  }
+}

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendJobLog, getJobLogPath } from "../jobLogger.js";
 
 const DEFAULT_CAPTURE_LIMIT = 2 * 1024 * 1024;
 
@@ -7,10 +8,10 @@ function isTruthyEnv(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-function shouldTeeOutput(): boolean {
+function shouldTeeOutput(hasJobLog: boolean): boolean {
   const raw = process.env.ORCHESTRATOR_TEE_CODEX;
-  // Default: tee is enabled unless explicitly disabled.
-  if (raw === undefined) return true;
+  // Default: if a job log is present, write there and keep console quiet unless explicitly enabled.
+  if (raw === undefined) return hasJobLog ? false : true;
   return isTruthyEnv(raw);
 }
 
@@ -45,12 +46,23 @@ export async function runWithCodexTee(
 ): Promise<{ stdout: string; stderr: string }> {
   const { command, args, cwd, label } = options;
   const captureLimit = options.captureLimit ?? DEFAULT_CAPTURE_LIMIT;
-  const tee = shouldTeeOutput();
+  const jobLogPath = getJobLogPath();
+  const hasJobLog = Boolean(jobLogPath);
+  const tee = shouldTeeOutput(hasJobLog);
   const prefix = label ? `[${label}]` : `[${command}]`;
   const makeLogLine = (message: string) => `${formatTimestamp()} ${prefix} ${message}`;
 
+  const appendJobLogSafe = (message: string) => {
+    if (!hasJobLog) return;
+    appendJobLog(makeLogLine(message)).catch(() => {
+      /* swallow logging errors */
+    });
+  };
+
   if (tee) {
     console.error(makeLogLine(`starting: ${command} ${args.join(" ")} (cwd: ${cwd})`));
+  } else {
+    appendJobLogSafe(`starting: ${command} ${args.join(" ")} (cwd: ${cwd})`);
   }
 
   return new Promise((resolve, reject) => {
@@ -66,36 +78,32 @@ export async function runWithCodexTee(
       stderr: "",
     };
 
-    const flushLineBuffer = (kind: "stdout" | "stderr") => {
-      if (!tee) return;
-      const pending = lineBuffers[kind];
-      if (!pending) return;
-      const target = kind === "stdout" ? process.stdout : process.stderr;
-      target.write(`${makeLogLine(pending)}\n`);
-      lineBuffers[kind] = "";
+    const emitLine = (kind: "stdout" | "stderr", line: string) => {
+      const taggedLine = kind === "stderr" ? `[stderr] ${line}` : line;
+      if (tee) {
+        const target = kind === "stdout" ? process.stdout : process.stderr;
+        target.write(`${makeLogLine(taggedLine)}\n`);
+      }
+      appendJobLogSafe(taggedLine);
     };
 
     const handleData = (kind: "stdout" | "stderr") => (data: Buffer) => {
       const asString = data.toString("utf8");
       if (kind === "stdout") {
         stdout = appendWithLimit(stdout, asString, captureLimit);
-        if (tee) {
-          const combined = lineBuffers.stdout + asString;
-          const lines = combined.split(/\r?\n/);
-          lineBuffers.stdout = lines.pop() ?? "";
-          for (const line of lines) {
-            process.stdout.write(`${makeLogLine(line)}\n`);
-          }
+        const combined = lineBuffers.stdout + asString;
+        const lines = combined.split(/\r?\n/);
+        lineBuffers.stdout = lines.pop() ?? "";
+        for (const line of lines) {
+          emitLine("stdout", line);
         }
       } else {
         stderr = appendWithLimit(stderr, asString, captureLimit);
-        if (tee) {
-          const combined = lineBuffers.stderr + asString;
-          const lines = combined.split(/\r?\n/);
-          lineBuffers.stderr = lines.pop() ?? "";
-          for (const line of lines) {
-            process.stderr.write(`${makeLogLine(line)}\n`);
-          }
+        const combined = lineBuffers.stderr + asString;
+        const lines = combined.split(/\r?\n/);
+        lineBuffers.stderr = lines.pop() ?? "";
+        for (const line of lines) {
+          emitLine("stderr", line);
         }
       }
     };
@@ -104,12 +112,12 @@ export async function runWithCodexTee(
     child.stderr?.on("data", handleData("stderr"));
 
     child.on("error", (error) => {
+      if (lineBuffers.stdout) emitLine("stdout", lineBuffers.stdout);
+      if (lineBuffers.stderr) emitLine("stderr", lineBuffers.stderr);
       if (tee) {
-        flushLineBuffer("stdout");
-        flushLineBuffer("stderr");
-        console.error(
-          makeLogLine(`failed to start: ${error?.message ?? String(error)}`),
-        );
+        console.error(makeLogLine(`failed to start: ${error?.message ?? String(error)}`));
+      } else {
+        appendJobLogSafe(`failed to start: ${error?.message ?? String(error)}`);
       }
       (error as any).stdout = stdout;
       (error as any).stderr = stderr;
@@ -117,14 +125,15 @@ export async function runWithCodexTee(
     });
 
     child.on("close", (code, signal) => {
-      if (tee) {
-        flushLineBuffer("stdout");
-        flushLineBuffer("stderr");
-      }
+      if (lineBuffers.stdout) emitLine("stdout", lineBuffers.stdout);
+      if (lineBuffers.stderr) emitLine("stderr", lineBuffers.stderr);
 
       if (tee) {
         const suffix = code !== null ? `exit=${code}` : `signal=${signal ?? "unknown"}`;
         console.error(makeLogLine(`finished (${suffix})`));
+      } else {
+        const suffix = code !== null ? `exit=${code}` : `signal=${signal ?? "unknown"}`;
+        appendJobLogSafe(`finished (${suffix})`);
       }
 
       if (code === 0) {

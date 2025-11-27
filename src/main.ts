@@ -1,5 +1,7 @@
+import path from "node:path";
 import { loadEnv } from "./loadEnv.js";
 import { runOrchestrator, type OrchestratorRunOptions } from "./orchestratorAgent.js";
+import { buildOrchestratorContext } from "./orchestratorTypes.js";
 
 type ParsedArgs = {
   taskDescription: string;
@@ -112,16 +114,26 @@ export async function main() {
     return;
   }
 
+  const previewContext = buildOrchestratorContext({
+    repoRoot: parsed.repoRoot,
+    baseDir: parsed.repoRoot,
+    baseBranch: parsed.baseBranch,
+    taskDescription: parsed.taskDescription,
+    userTask: parsed.taskDescription,
+  });
+
   const options: OrchestratorRunOptions = {
     taskDescription: parsed.taskDescription,
     repoRoot: parsed.repoRoot,
     baseBranch: parsed.baseBranch,
     pushResult: parsed.pushResult,
+    jobId: previewContext.jobId,
   };
 
   try {
-    const result = await runOrchestrator(options);
-    console.log(result);
+    await runOrchestrator(options);
+    const logPath = path.join(previewContext.jobsRoot, "orchestrator.log");
+    console.log(`[orchestrator] job ${previewContext.jobId} finished. Full log: ${logPath}`);
   } catch (error) {
     console.error("Orchestrator failed:", error);
     process.exitCode = 1;

@@ -11,6 +11,7 @@ import {
   type OrchestratorContext,
 } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
+import { appendJobLog } from "../jobLogger.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
@@ -122,18 +123,27 @@ function sanitizeBranchName(name: string, fallback: string): string {
   return cleaned || fallback;
 }
 
-function buildSubtaskPrompt(subtask: CodexRunSubtaskInput["subtask"], userTask: string): string {
-  const contextBlock = subtask.context || userTask;
-  const userTaskSection = contextBlock
+function buildSubtaskPrompt(
+  subtask: CodexRunSubtaskInput["subtask"],
+  fullUserTask: string,
+  plannerContext?: string | null,
+): string {
+  const userTaskSection = fullUserTask
     ? [
-        "Исходная задача пользователя (только для контекста, не перепоручай заново):",
-        contextBlock,
+        "Исходная задача пользователя (полный текст, не сокращай и не перепоручай заново):",
+        fullUserTask,
         "",
       ]
     : [];
 
+  const plannerContextSection =
+    plannerContext && plannerContext !== fullUserTask
+      ? ["Контекст от планера (как есть, только для справки):", plannerContext, ""]
+      : [];
+
   return [
     ...userTaskSection,
+    ...plannerContextSection,
     `Твоя подзадача: ${subtask.title}`,
     "",
     "Описание подзадачи:",
@@ -331,15 +341,22 @@ export async function codexRunSubtask(
   }
 
   const userTaskContextRaw =
-    params.subtask.context ??
     params.user_task ??
     runContext?.context?.userTask ??
     runContext?.context?.taskDescription ??
+    params.subtask.context ??
     "";
+  const plannerContext = typeof params.subtask.context === "string" ? params.subtask.context.trim() : null;
   const userTaskContext = typeof userTaskContextRaw === "string" ? userTaskContextRaw.trim() : "";
-  const prompt = buildSubtaskPrompt(params.subtask, userTaskContext);
+  const prompt = buildSubtaskPrompt(params.subtask, userTaskContext || plannerContext || "", plannerContext);
   let stdout = "";
   let stderr = "";
+
+  const jobLabel = context.jobId ? `[job ${context.jobId}]` : "[job]";
+  const subtaskLabel = `${jobLabel} subtask ${params.subtask.id}`;
+  const startMessage = `${subtaskLabel} started @ ${worktreeDir}`;
+  console.log(startMessage);
+  appendJobLog(startMessage).catch(() => {});
 
   try {
     const result = await execImplementation({
@@ -358,6 +375,9 @@ export async function codexRunSubtask(
       jobId: context.jobId,
       summary: parsed.summary,
     });
+    const finishMessage = `${subtaskLabel} finished (${parsed.status})`;
+    console.log(finishMessage);
+    appendJobLog(finishMessage).catch(() => {});
     return {
       ...parsed,
       branch: parsed.branch || branchName || undefined,
@@ -374,11 +394,17 @@ export async function codexRunSubtask(
         jobId: context.jobId,
         summary: parsed.summary,
       });
+      const finishMessage = `${subtaskLabel} finished (${parsed.status})`;
+      console.log(finishMessage);
+      appendJobLog(finishMessage).catch(() => {});
       return {
         ...parsed,
         branch: parsed.branch || branchName || undefined,
       };
     } catch {
+      const failMessage = `${subtaskLabel} failed`;
+      console.log(failMessage);
+      appendJobLog(failMessage).catch(() => {});
       const parts = [
         "codex_run_subtask failed: could not parse final JSON.",
         stdout ? `stdout (truncated):\n${truncate(stdout, OUTPUT_TRUNCATE)}` : null,
