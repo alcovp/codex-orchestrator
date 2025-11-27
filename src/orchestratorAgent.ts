@@ -12,7 +12,12 @@ import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js"
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js"
 import { resolveBaseBranch } from "./baseBranch.js"
 import { appendJobLog, setJobLogPath } from "./jobLogger.js"
-import { resolveDbPath, markJobStatus, recordMergeResult } from "./db/sqliteDb.js"
+import {
+    resolveDbPath,
+    markJobStatus,
+    recordMergeResult,
+    ensureTerminalJobStatus,
+} from "./db/sqliteDb.js"
 
 export interface OrchestratorRunOptions {
     /**
@@ -154,8 +159,10 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
             } else {
                 markJobStatus(context, "done")
             }
+            ensureTerminalJobStatus(context, "done")
         } catch {
             markJobStatus(context, "done")
+            ensureTerminalJobStatus(context, "done")
         }
         return output
     } catch (error) {
@@ -163,6 +170,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
         if (error instanceof Error) {
             await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
             markJobStatus(context, "failed")
+            ensureTerminalJobStatus(context, "failed")
         }
         throw error
     } finally {

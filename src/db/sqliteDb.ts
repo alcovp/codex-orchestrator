@@ -130,6 +130,27 @@ export function markJobStatus(context: OrchestratorContext, status: JobStatus) {
     }
 }
 
+export function ensureTerminalJobStatus(
+    context: OrchestratorContext,
+    fallback: JobStatus = "done",
+) {
+    try {
+        const row = db()
+            .prepare("SELECT status FROM jobs WHERE job_id = ?")
+            .get(context.jobId) as { status?: JobStatus } | undefined
+        const current = row?.status
+        if (!current) return
+
+        const isTerminal =
+            current === "done" || current === "failed" || current === "needs_manual_review"
+        if (isTerminal) return
+
+        markJobStatus(context, fallback)
+    } catch (error) {
+        logDbError("ensureTerminalJobStatus failed", error)
+    }
+}
+
 export function recordSubtaskReasoning(params: {
     context: OrchestratorContext
     subtaskId: string

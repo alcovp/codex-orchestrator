@@ -171,7 +171,9 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
                 {!subtask.summary && subtask.last_reasoning && (
                     <div className="node-reasoning">
                         <div className="node-reasoning-label">Thoughts</div>
-                        <pre className="node-reasoning-body">{subtask.last_reasoning}</pre>
+                        <pre className="node-reasoning-body" key={subtask.last_reasoning}>
+                            {subtask.last_reasoning}
+                        </pre>
                     </div>
                 )}
             </div>
