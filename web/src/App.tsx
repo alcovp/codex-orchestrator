@@ -52,7 +52,18 @@ function StatusPill({ label }: { label: string }) {
     )
 }
 
-function JobHeader({ job }: { job: JobRecord }) {
+function JobHeader({
+    job,
+    toggles,
+}: {
+    job: JobRecord
+    toggles: {
+        showGraph: boolean
+        toggleGraph: () => void
+        showArtifacts: boolean
+        toggleArtifacts: () => void
+    }
+}) {
     return (
         <div className="job-header">
             <div className="job-title">
@@ -60,7 +71,17 @@ function JobHeader({ job }: { job: JobRecord }) {
                 <StatusPill label={job.status} />
             </div>
             <div className="job-meta">
-                <div>{job.taskDescription}</div>
+                <div className="job-row">
+                    <div className="job-task">{job.taskDescription}</div>
+                    <div className="job-controls">
+                        <button className="ghost small" onClick={toggles.toggleGraph}>
+                            {toggles.showGraph ? "Hide graph" : "Show graph"}
+                        </button>
+                        <button className="ghost small" onClick={toggles.toggleArtifacts}>
+                            {toggles.showArtifacts ? "Hide artifacts" : "Show artifacts"}
+                        </button>
+                    </div>
+                </div>
                 <div className="meta-grid">
                     <span>Repo: {job.repoRoot}</span>
                     <span>Base: {job.baseBranch}</span>
@@ -163,28 +184,46 @@ function Artifacts({ job }: { job: JobRecord }) {
                     .slice()
                     .reverse()
                     .map((art) => (
-                        <div className="artifact-card" key={art.id}>
-                            <div className="artifact-meta">
-                                <span>{art.type}</span>
-                                {art.label && <span className="muted">{art.label}</span>}
-                            </div>
-                            <div className="artifact-time">
-                                {new Date(art.createdAt).toLocaleString()}
-                            </div>
-                            <pre className="artifact-body">{JSON.stringify(art.data, null, 2)}</pre>
-                        </div>
+                        <ArtifactCard key={art.id} art={art} />
                     ))}
             </div>
         </div>
     )
 }
 
+function ArtifactCard({ art }: { art: JobRecord["artifacts"][number] }) {
+    const [open, setOpen] = useState(false)
+    return (
+        <div className="artifact-card">
+            <div className="artifact-meta">
+                <span>{art.type}</span>
+                {art.label && <span className="muted">{art.label}</span>}
+            </div>
+            <div className="artifact-time">{new Date(art.createdAt).toLocaleString()}</div>
+            <button className="ghost small" onClick={() => setOpen((v) => !v)}>
+                {open ? "Hide data" : "Show data"}
+            </button>
+            {open && <pre className="artifact-body">{JSON.stringify(art.data, null, 2)}</pre>}
+        </div>
+    )
+}
+
 function JobCard({ job }: { job: JobRecord }) {
+    const [showGraph, setShowGraph] = useState(false)
+    const [showArtifacts, setShowArtifacts] = useState(false)
     return (
         <div className="card">
-            <JobHeader job={job} />
-            <Graph job={job} />
-            <Artifacts job={job} />
+            <JobHeader
+                job={job}
+                toggles={{
+                    showGraph,
+                    toggleGraph: () => setShowGraph((v) => !v),
+                    showArtifacts,
+                    toggleArtifacts: () => setShowArtifacts((v) => !v),
+                }}
+            />
+            {showGraph && <Graph job={job} />}
+            {showArtifacts && <Artifacts job={job} />}
         </div>
     )
 }

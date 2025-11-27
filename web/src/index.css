@@ -78,6 +78,12 @@ button.ghost {
     border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+button.small {
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: 8px;
+}
+
 .state {
     padding: 6px 10px;
     border-radius: 8px;
@@ -133,6 +139,22 @@ button.ghost {
 .job-meta {
     color: #cbd5e1;
     font-size: 14px;
+}
+
+.job-row {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.job-task {
+    flex: 1;
+}
+
+.job-controls {
+    display: flex;
+    gap: 8px;
 }
 
 .meta-grid {
