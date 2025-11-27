@@ -113,22 +113,27 @@ function JobHeader({
         toggleArtifacts: () => void
     }
 }) {
+    const taskText = job.taskDescription || job.userTask || "(no task description)"
     return (
         <div className="job-header">
             <div className="job-title">
-                <span className="job-id">#{job.jobId}</span>
-                <StatusPill label={job.status} />
+                <div className="job-title-main">
+                    <span className="job-id">#{job.jobId}</span>
+                    <StatusPill label={job.status} />
+                </div>
+                <div className="job-controls">
+                    <button className="ghost small" onClick={toggles.toggleGraph}>
+                        {toggles.showGraph ? "Hide graph" : "Show graph"}
+                    </button>
+                    <button className="ghost small" onClick={toggles.toggleArtifacts}>
+                        {toggles.showArtifacts ? "Hide artifacts" : "Show artifacts"}
+                    </button>
+                </div>
             </div>
             <div className="job-meta">
                 <div className="job-row">
-                    <div className="job-task">{job.taskDescription}</div>
-                    <div className="job-controls">
-                        <button className="ghost small" onClick={toggles.toggleGraph}>
-                            {toggles.showGraph ? "Hide graph" : "Show graph"}
-                        </button>
-                        <button className="ghost small" onClick={toggles.toggleArtifacts}>
-                            {toggles.showArtifacts ? "Hide artifacts" : "Show artifacts"}
-                        </button>
+                    <div className="job-task">
+                        <pre className="job-task-body">{taskText}</pre>
                     </div>
                 </div>
                 <div className="meta-grid">
@@ -163,8 +168,11 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
                     )}
                 </div>
                 {subtask.summary && <div className="node-summary">{subtask.summary}</div>}
-                {subtask.last_reasoning && (
-                    <div className="node-reasoning">Thoughts: {subtask.last_reasoning}</div>
+                {!subtask.summary && subtask.last_reasoning && (
+                    <div className="node-reasoning">
+                        <div className="node-reasoning-label">Thoughts</div>
+                        <pre className="node-reasoning-body">{subtask.last_reasoning}</pre>
+                    </div>
                 )}
             </div>
         </div>

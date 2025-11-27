@@ -154,6 +154,8 @@ export function recordSubtaskReasoning(params: {
 
 function upsertJob(context: OrchestratorContext, status: JobStatus) {
     const now = isoNow()
+    const taskDescription = context.taskDescription || context.userTask || ""
+    const userTask = context.userTask || context.taskDescription || ""
     const stmt = db().prepare(
         `
     INSERT INTO jobs (job_id, repo_root, base_branch, task_description, user_task, push_result, status, started_at, updated_at)
@@ -172,8 +174,8 @@ function upsertJob(context: OrchestratorContext, status: JobStatus) {
         job_id: context.jobId,
         repo_root: context.repoRoot,
         base_branch: context.baseBranch,
-        task_description: context.taskDescription,
-        user_task: context.userTask,
+        task_description: taskDescription,
+        user_task: userTask,
         push_result: context.pushResult ? 1 : 0,
         status,
         started_at: now,
@@ -188,8 +190,14 @@ export function recordPlannerOutput(params: {
 }) {
     try {
         const now = isoNow()
+        const contextWithTask = {
+            ...params.context,
+            taskDescription:
+                params.context.taskDescription || params.userTask || params.context.userTask || "",
+            userTask: params.context.userTask || params.userTask || params.context.taskDescription || "",
+        }
         const tx = db().transaction(() => {
-            upsertJob(params.context, "planning")
+            upsertJob(contextWithTask, "planning")
             const subtaskStmt = db().prepare(
                 `
         INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, updated_at)
@@ -452,8 +460,9 @@ export function readDashboardData(): {
                 jobId: row.job_id as string,
                 repoRoot: row.repo_root as string,
                 baseBranch: row.base_branch as string,
-                taskDescription: row.task_description as string,
-                userTask: row.user_task as string,
+                taskDescription:
+                    (row.task_description as string) || (row.user_task as string) || "",
+                userTask: (row.user_task as string) || (row.task_description as string) || "",
                 pushResult: Boolean(row.push_result),
                 status: row.status as string,
                 startedAt: row.started_at as string,
@@ -565,8 +574,9 @@ export function readActiveJob():
             jobId: job.job_id as string,
             repoRoot: job.repo_root as string,
             baseBranch: job.base_branch as string,
-            taskDescription: job.task_description as string,
-            userTask: job.user_task as string,
+            taskDescription:
+                (job.task_description as string) || (job.user_task as string) || "",
+            userTask: (job.user_task as string) || (job.task_description as string) || "",
             pushResult: Boolean(job.push_result),
             status: job.status as string,
             startedAt: job.started_at as string,
