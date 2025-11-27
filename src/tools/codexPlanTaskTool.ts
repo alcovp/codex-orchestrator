@@ -5,6 +5,7 @@ import path from "node:path";
 import type { OrchestratorContext } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 import { appendJobLog } from "../jobLogger.js";
+import { recordPlannerOutput } from "../db/orchestratorDb.js";
 
 const OUTPUT_TRUNCATE = 2000;
 
@@ -197,7 +198,7 @@ export async function codexPlanTask(
     stdout = result.stdout ?? "";
     stderr = result.stderr ?? "";
     const plan = normalizeOutput(extractJsonObject(stdout || stderr));
-    await persistPlan(plan, runContext?.context);
+    await persistPlan(plan, runContext?.context, params.user_task);
     return plan;
   } catch (error: any) {
     stdout = (error?.stdout ?? stdout ?? "") as string;
@@ -205,7 +206,7 @@ export async function codexPlanTask(
 
     try {
       const plan = normalizeOutput(extractJsonObject(`${stdout}\n${stderr}`));
-      await persistPlan(plan, runContext?.context);
+      await persistPlan(plan, runContext?.context, params.user_task);
       return plan;
     } catch {
       const parts = [
@@ -230,13 +231,20 @@ export const codexPlanTaskTool = tool({
   },
 });
 
-async function persistPlan(plan: CodexPlanTaskResult, context?: OrchestratorContext) {
+async function persistPlan(
+  plan: CodexPlanTaskResult,
+  context?: OrchestratorContext,
+  userTask?: string,
+) {
   if (!context?.jobsRoot) return;
   const planPath = path.join(context.jobsRoot, "planner-output.json");
   try {
     await mkdir(path.dirname(planPath), { recursive: true });
     await writeFile(planPath, JSON.stringify(plan, null, 2), "utf8");
     await appendJobLog(`[planner] saved plan to ${planPath}`);
+    if (userTask) {
+      await recordPlannerOutput({ context, plan, userTask });
+    }
   } catch {
     // Logging should not break orchestrator flow.
   }

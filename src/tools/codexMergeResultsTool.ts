@@ -11,6 +11,7 @@ import {
   resolveJobId,
   type OrchestratorContext,
 } from "../orchestratorTypes.js";
+import { recordMergeResult, recordMergeStart } from "../db/orchestratorDb.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
@@ -327,7 +328,15 @@ async function resolveConflictsWithCodex({
   await exec({
     program: "codex",
     // Keep conflict worker lightweight; avoid heavy defaults and extra flags unsupported by the CLI.
-    args: ["exec", "--full-auto", prompt],
+    args: [
+      "exec",
+      "--full-auto",
+      "--config",
+      'model_reasoning_effort="minimal"',
+      "--config",
+      'model_reasoning_summary="none"',
+      prompt,
+    ],
     cwd,
     label: `codex-merge-conflicts:${branch}`,
     // captureLimit handled inside runWithCodexTee defaults; explicit for clarity
@@ -458,6 +467,19 @@ export async function codexMergeResults(
     worktree_path: resolveWorktreePath(r.worktree_path, repoRoot),
   }));
 
+  await recordMergeStart({
+    context,
+    mergeInput: {
+      ...params,
+      project_root: repoRoot,
+      job_id: resolvedJobId,
+      base_branch: baseBranch,
+      result_branch: resultBranch,
+      push_result: pushResult,
+      subtasks_results: resolvedResults,
+    },
+  });
+
   const mergeSummaries: Array<{ branch: string; conflicts: string[] }> = [];
   const mergedHeadSummaries: string[] = [];
 
@@ -516,11 +538,18 @@ export async function codexMergeResults(
   }
   const notes = `${notesBase}${pushNotes}`;
 
-  return {
+  const mergeResult: CodexMergeResultsResult = {
     status: "ok",
     notes,
     touched_files: touchedFiles,
   };
+
+  await recordMergeResult({
+    context,
+    mergeResult,
+  });
+
+  return mergeResult;
 }
 
 export const codexMergeResultsTool = tool({

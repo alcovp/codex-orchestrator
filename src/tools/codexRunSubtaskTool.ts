@@ -12,6 +12,7 @@ import {
 } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 import { appendJobLog } from "../jobLogger.js";
+import { recordSubtaskResult, recordSubtaskStart } from "../db/orchestratorDb.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;
@@ -340,6 +341,13 @@ export async function codexRunSubtask(
     branchName = current || branchName;
   }
 
+  await recordSubtaskStart({
+    context,
+    subtask: params.subtask,
+    worktreePath: worktreeDir,
+    branchName,
+  });
+
   const userTaskContextRaw =
     params.user_task ??
     runContext?.context?.userTask ??
@@ -375,6 +383,13 @@ export async function codexRunSubtask(
       jobId: context.jobId,
       summary: parsed.summary,
     });
+    await recordSubtaskResult({
+      context,
+      subtask: params.subtask,
+      worktreePath: worktreeDir,
+      branchName,
+      result: parsed,
+    });
     const finishMessage = `${subtaskLabel} finished (${parsed.status})`;
     console.log(finishMessage);
     appendJobLog(finishMessage).catch(() => {});
@@ -394,6 +409,13 @@ export async function codexRunSubtask(
         jobId: context.jobId,
         summary: parsed.summary,
       });
+      await recordSubtaskResult({
+        context,
+        subtask: params.subtask,
+        worktreePath: worktreeDir,
+        branchName,
+        result: parsed,
+      });
       const finishMessage = `${subtaskLabel} finished (${parsed.status})`;
       console.log(finishMessage);
       appendJobLog(finishMessage).catch(() => {});
@@ -401,10 +423,23 @@ export async function codexRunSubtask(
         ...parsed,
         branch: parsed.branch || branchName || undefined,
       };
-    } catch {
+    } catch (error: any) {
       const failMessage = `${subtaskLabel} failed`;
       console.log(failMessage);
       appendJobLog(failMessage).catch(() => {});
+      await recordSubtaskResult({
+        context,
+        subtask: params.subtask,
+        worktreePath: worktreeDir,
+        branchName,
+        result: {
+          subtask_id: params.subtask.id,
+          status: "failed",
+          summary: "Failed to parse subtask JSON result",
+          important_files: [],
+        },
+        errorMessage: error?.message ?? "Failed to parse subtask JSON result",
+      });
       const parts = [
         "codex_run_subtask failed: could not parse final JSON.",
         stdout ? `stdout (truncated):\n${truncate(stdout, OUTPUT_TRUNCATE)}` : null,
