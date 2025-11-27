@@ -11,7 +11,7 @@ import {
   resolveJobId,
   type OrchestratorContext,
 } from "../orchestratorTypes.js";
-import { recordMergeResult, recordMergeStart } from "../db/orchestratorDb.js";
+import { recordMergeResult, recordMergeStart } from "../db/sqliteDb.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;

@@ -12,7 +12,7 @@ import {
 } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 import { appendJobLog } from "../jobLogger.js";
-import { recordSubtaskResult, recordSubtaskStart } from "../db/orchestratorDb.js";
+import { recordSubtaskResult, recordSubtaskStart } from "../db/sqliteDb.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024;

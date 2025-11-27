@@ -1,8 +1,7 @@
-import express from "express";
-import path from "node:path";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { resolveDbPath } from "./db/orchestratorDb.js";
+import express from 'express'
+import path from 'node:path'
+import { existsSync } from 'node:fs'
+import { readDashboardData, resolveDbPath } from './db/sqliteDb.js'
 
 const PORT = Number(process.env.DASHBOARD_PORT || 4179);
 const repoRoot = process.cwd();
@@ -24,8 +23,12 @@ app.use((req, res, next) => {
 
 app.get("/api/db", async (_req, res) => {
   try {
-    const body = existsSync(dbPath) ? await readFile(dbPath, "utf8") : '{"jobs":[]}';
-    res.type("application/json").send(body || '{"jobs":[]}');
+    if (!existsSync(dbPath)) {
+      res.json({ jobs: [] });
+      return;
+    }
+    const data = readDashboardData();
+    res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to read DB" });
   }

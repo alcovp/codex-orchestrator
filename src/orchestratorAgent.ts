@@ -12,7 +12,7 @@ import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js";
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js";
 import { resolveBaseBranch } from "./baseBranch.js";
 import { appendJobLog, setJobLogPath } from "./jobLogger.js";
-import { resolveDbPath } from "./db/orchestratorDb.js";
+import { resolveDbPath } from "./db/sqliteDb.js";
 
 export interface OrchestratorRunOptions {
   /**

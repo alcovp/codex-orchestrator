@@ -5,7 +5,7 @@ import path from "node:path";
 import type { OrchestratorContext } from "../orchestratorTypes.js";
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js";
 import { appendJobLog } from "../jobLogger.js";
-import { recordPlannerOutput } from "../db/orchestratorDb.js";
+import { recordPlannerOutput } from "../db/sqliteDb.js";
 
 const OUTPUT_TRUNCATE = 2000;
 
