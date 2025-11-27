@@ -1423,6 +1423,7 @@ __metadata:
     "@vitejs/plugin-react": "npm:^4.3.3"
     better-sqlite3: "npm:^11.7.0"
     express: "npm:^4.19.2"
+    prettier: "npm:^3.4.2"
     react: "npm:^18.3.1"
     react-dom: "npm:^18.3.1"
     tsx: "npm:^4.20.6"
@@ -2908,6 +2909,15 @@ __metadata:
   bin:
     prebuild-install: bin.js
   checksum: 10/1b7e4c00d2750b532a4fc2a83ffb0c5fefa1b6f2ad071896ead15eeadc3255f5babd816949991af083cf7429e375ae8c7d1c51f73658559da36f948a020a3a11
+  languageName: node
+  linkType: hard
+
+"prettier@npm:^3.4.2":
+  version: 3.7.1
+  resolution: "prettier@npm:3.7.1"
+  bin:
+    prettier: bin/prettier.cjs
+  checksum: 10/59fa89769246d395de30dec976e0ad31c8d2fe3889733765d89398c95c2b9d6cd341553a850fe14fe187407c9bfb2262a2ab1823c6de1f0205a968e2012f0f11
   languageName: node
   linkType: hard
 

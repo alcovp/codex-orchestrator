@@ -1,0 +1,7 @@
+.git
+.yarn
+node_modules
+.codex
+web/dist
+run_repo_command.log
+dispatcher.log

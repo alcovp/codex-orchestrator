@@ -1,41 +1,44 @@
-import path from "node:path";
-import { mkdirSync } from "node:fs";
-import Database from "better-sqlite3";
-import type { OrchestratorContext } from "../orchestratorTypes.js";
-import type { CodexPlanTaskResult } from "../tools/codexPlanTaskTool.js";
-import type { CodexRunSubtaskInput, CodexRunSubtaskResult } from "../tools/codexRunSubtaskTool.js";
-import type { CodexMergeResultsInput, CodexMergeResultsResult } from "../tools/codexMergeResultsTool.js";
-import { appendJobLog } from "../jobLogger.js";
+import path from "node:path"
+import { mkdirSync } from "node:fs"
+import Database from "better-sqlite3"
+import type { OrchestratorContext } from "../orchestratorTypes.js"
+import type { CodexPlanTaskResult } from "../tools/codexPlanTaskTool.js"
+import type { CodexRunSubtaskInput, CodexRunSubtaskResult } from "../tools/codexRunSubtaskTool.js"
+import type {
+    CodexMergeResultsInput,
+    CodexMergeResultsResult,
+} from "../tools/codexMergeResultsTool.js"
+import { appendJobLog } from "../jobLogger.js"
 
-type JobStatus = "planning" | "running" | "merging" | "done" | "failed" | "needs_manual_review";
-type SubtaskStatus = "pending" | "running" | "completed" | "failed";
+type JobStatus = "planning" | "running" | "merging" | "done" | "failed" | "needs_manual_review"
+type SubtaskStatus = "pending" | "running" | "completed" | "failed"
 
 export function resolveDbPath(): string {
-  const fromEnv = process.env.ORCHESTRATOR_DB_PATH;
-  if (fromEnv?.trim()) return path.resolve(fromEnv.trim());
-  return path.resolve(process.cwd(), "orchestrator.db");
+    const fromEnv = process.env.ORCHESTRATOR_DB_PATH
+    if (fromEnv?.trim()) return path.resolve(fromEnv.trim())
+    return path.resolve(process.cwd(), "orchestrator.db")
 }
 
 function ensureDb(): Database.Database {
-  const dbPath = resolveDbPath();
-  mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  return db;
+    const dbPath = resolveDbPath()
+    mkdirSync(path.dirname(dbPath), { recursive: true })
+    const db = new Database(dbPath)
+    db.pragma("journal_mode = WAL")
+    db.pragma("foreign_keys = ON")
+    return db
 }
 
-let dbSingleton: Database.Database | null = null;
+let dbSingleton: Database.Database | null = null
 function db(): Database.Database {
-  if (!dbSingleton) {
-    dbSingleton = ensureDb();
-    migrate(dbSingleton);
-  }
-  return dbSingleton;
+    if (!dbSingleton) {
+        dbSingleton = ensureDb()
+        migrate(dbSingleton)
+    }
+    return dbSingleton
 }
 
 function migrate(database: Database.Database) {
-  database.exec(`
+    database.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
       job_id TEXT PRIMARY KEY,
       repo_root TEXT NOT NULL,
@@ -75,22 +78,22 @@ function migrate(database: Database.Database) {
       data TEXT NOT NULL,
       FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
     );
-  `);
+  `)
 }
 
-const isoNow = () => new Date().toISOString();
-const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+const isoNow = () => new Date().toISOString()
+const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`
 
 function logDbError(message: string, error: unknown) {
-  appendJobLog(`[db] ${message}: ${error instanceof Error ? error.message : String(error)}`).catch(
-    () => {},
-  );
+    appendJobLog(
+        `[db] ${message}: ${error instanceof Error ? error.message : String(error)}`,
+    ).catch(() => {})
 }
 
 function upsertJob(context: OrchestratorContext, status: JobStatus) {
-  const now = isoNow();
-  const stmt = db().prepare(
-    `
+    const now = isoNow()
+    const stmt = db().prepare(
+        `
     INSERT INTO jobs (job_id, repo_root, base_branch, task_description, user_task, push_result, status, started_at, updated_at)
     VALUES (@job_id, @repo_root, @base_branch, @task_description, @user_task, @push_result, @status, @started_at, @updated_at)
     ON CONFLICT(job_id) DO UPDATE SET
@@ -102,31 +105,31 @@ function upsertJob(context: OrchestratorContext, status: JobStatus) {
       status=excluded.status,
       updated_at=excluded.updated_at
     `,
-  );
-  stmt.run({
-    job_id: context.jobId,
-    repo_root: context.repoRoot,
-    base_branch: context.baseBranch,
-    task_description: context.taskDescription,
-    user_task: context.userTask,
-    push_result: context.pushResult ? 1 : 0,
-    status,
-    started_at: now,
-    updated_at: now,
-  });
+    )
+    stmt.run({
+        job_id: context.jobId,
+        repo_root: context.repoRoot,
+        base_branch: context.baseBranch,
+        task_description: context.taskDescription,
+        user_task: context.userTask,
+        push_result: context.pushResult ? 1 : 0,
+        status,
+        started_at: now,
+        updated_at: now,
+    })
 }
 
 export function recordPlannerOutput(params: {
-  context: OrchestratorContext;
-  plan: CodexPlanTaskResult;
-  userTask: string;
+    context: OrchestratorContext
+    plan: CodexPlanTaskResult
+    userTask: string
 }) {
-  try {
-    const now = isoNow();
-    const tx = db().transaction(() => {
-      upsertJob(params.context, "planning");
-      const subtaskStmt = db().prepare(
-        `
+    try {
+        const now = isoNow()
+        const tx = db().transaction(() => {
+            upsertJob(params.context, "planning")
+            const subtaskStmt = db().prepare(
+                `
         INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, updated_at)
         VALUES (@job_id, @subtask_id, @title, @description, @parallel_group, @status, @updated_at)
         ON CONFLICT(job_id, subtask_id) DO UPDATE SET
@@ -136,49 +139,49 @@ export function recordPlannerOutput(params: {
           status=excluded.status,
           updated_at=excluded.updated_at
         `,
-      );
-      params.plan.subtasks.forEach((s) =>
-        subtaskStmt.run({
-          job_id: params.context.jobId,
-          subtask_id: s.id,
-          title: s.title,
-          description: s.description,
-          parallel_group: s.parallel_group ?? null,
-          status: "pending",
-          updated_at: now,
-        }),
-      );
-      db()
-        .prepare(
-          `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+            )
+            params.plan.subtasks.forEach((s) =>
+                subtaskStmt.run({
+                    job_id: params.context.jobId,
+                    subtask_id: s.id,
+                    title: s.title,
+                    description: s.description,
+                    parallel_group: s.parallel_group ?? null,
+                    status: "pending",
+                    updated_at: now,
+                }),
+            )
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
            VALUES (@id, @job_id, 'plan', 'planner-output', @created_at, @data)`,
-        )
-        .run({
-          id: makeId(),
-          job_id: params.context.jobId,
-          created_at: now,
-          data: JSON.stringify(params.plan),
-        });
-    });
-    tx();
-  } catch (error) {
-    logDbError("recordPlannerOutput failed", error);
-  }
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.plan),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordPlannerOutput failed", error)
+    }
 }
 
 export function recordSubtaskStart(params: {
-  context: OrchestratorContext;
-  subtask: CodexRunSubtaskInput["subtask"];
-  worktreePath: string;
-  branchName: string;
+    context: OrchestratorContext
+    subtask: CodexRunSubtaskInput["subtask"]
+    worktreePath: string
+    branchName: string
 }) {
-  try {
-    const now = isoNow();
-    const tx = db().transaction(() => {
-      upsertJob(params.context, "running");
-      db()
-        .prepare(
-          `
+    try {
+        const now = isoNow()
+        const tx = db().transaction(() => {
+            upsertJob(params.context, "running")
+            db()
+                .prepare(
+                    `
           INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, worktree, branch, started_at, updated_at)
           VALUES (@job_id, @subtask_id, @title, @description, @parallel_group, @status, @worktree, @branch, @started_at, @updated_at)
           ON CONFLICT(job_id, subtask_id) DO UPDATE SET
@@ -191,42 +194,42 @@ export function recordSubtaskStart(params: {
             started_at=COALESCE(subtasks.started_at, excluded.started_at),
             updated_at=excluded.updated_at
         `,
-        )
-        .run({
-          job_id: params.context.jobId,
-          subtask_id: params.subtask.id,
-          title: params.subtask.title,
-          description: params.subtask.description,
-          parallel_group: params.subtask.parallel_group ?? null,
-          status: "running",
-          worktree: params.worktreePath,
-          branch: params.branchName,
-          started_at: now,
-          updated_at: now,
-        });
-    });
-    tx();
-  } catch (error) {
-    logDbError("recordSubtaskStart failed", error);
-  }
+                )
+                .run({
+                    job_id: params.context.jobId,
+                    subtask_id: params.subtask.id,
+                    title: params.subtask.title,
+                    description: params.subtask.description,
+                    parallel_group: params.subtask.parallel_group ?? null,
+                    status: "running",
+                    worktree: params.worktreePath,
+                    branch: params.branchName,
+                    started_at: now,
+                    updated_at: now,
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordSubtaskStart failed", error)
+    }
 }
 
 export function recordSubtaskResult(params: {
-  context: OrchestratorContext;
-  subtask: CodexRunSubtaskInput["subtask"];
-  worktreePath: string;
-  branchName: string;
-  result: CodexRunSubtaskResult;
-  errorMessage?: string;
+    context: OrchestratorContext
+    subtask: CodexRunSubtaskInput["subtask"]
+    worktreePath: string
+    branchName: string
+    result: CodexRunSubtaskResult
+    errorMessage?: string
 }) {
-  try {
-    const now = isoNow();
-    const isOk = params.result.status === "ok";
-    const tx = db().transaction(() => {
-      upsertJob(params.context, isOk ? "running" : "failed");
-      db()
-        .prepare(
-          `
+    try {
+        const now = isoNow()
+        const isOk = params.result.status === "ok"
+        const tx = db().transaction(() => {
+            upsertJob(params.context, isOk ? "running" : "failed")
+            db()
+                .prepare(
+                    `
           INSERT INTO subtasks (job_id, subtask_id, title, description, parallel_group, status, worktree, branch, summary, important_files, error, started_at, finished_at, updated_at)
           VALUES (@job_id, @subtask_id, @title, @description, @parallel_group, @status, @worktree, @branch, @summary, @important_files, @error, @started_at, @finished_at, @updated_at)
           ON CONFLICT(job_id, subtask_id) DO UPDATE SET
@@ -243,200 +246,204 @@ export function recordSubtaskResult(params: {
             finished_at=excluded.finished_at,
             updated_at=excluded.updated_at
         `,
-        )
-        .run({
-          job_id: params.context.jobId,
-          subtask_id: params.subtask.id,
-          title: params.subtask.title,
-          description: params.subtask.description,
-          parallel_group: params.subtask.parallel_group ?? null,
-          status: isOk ? "completed" : "failed",
-          worktree: params.worktreePath,
-          branch: params.result.branch ?? params.branchName,
-          summary: params.result.summary,
-          important_files: JSON.stringify(params.result.important_files ?? []),
-          error: params.errorMessage ?? null,
-          started_at: now,
-          finished_at: now,
-          updated_at: now,
-        });
+                )
+                .run({
+                    job_id: params.context.jobId,
+                    subtask_id: params.subtask.id,
+                    title: params.subtask.title,
+                    description: params.subtask.description,
+                    parallel_group: params.subtask.parallel_group ?? null,
+                    status: isOk ? "completed" : "failed",
+                    worktree: params.worktreePath,
+                    branch: params.result.branch ?? params.branchName,
+                    summary: params.result.summary,
+                    important_files: JSON.stringify(params.result.important_files ?? []),
+                    error: params.errorMessage ?? null,
+                    started_at: now,
+                    finished_at: now,
+                    updated_at: now,
+                })
 
-      db()
-        .prepare(
-          `INSERT INTO artifacts (id, job_id, type, label, subtask_id, created_at, data)
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, subtask_id, created_at, data)
            VALUES (@id, @job_id, 'subtask_result', @label, @subtask_id, @created_at, @data)`,
-        )
-        .run({
-          id: makeId(),
-          job_id: params.context.jobId,
-          label: `subtask-${params.subtask.id}`,
-          subtask_id: params.subtask.id,
-          created_at: now,
-          data: JSON.stringify(params.result),
-        });
-    });
-    tx();
-  } catch (error) {
-    logDbError("recordSubtaskResult failed", error);
-  }
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    label: `subtask-${params.subtask.id}`,
+                    subtask_id: params.subtask.id,
+                    created_at: now,
+                    data: JSON.stringify(params.result),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordSubtaskResult failed", error)
+    }
 }
 
 export function recordMergeStart(params: {
-  context: OrchestratorContext;
-  mergeInput: CodexMergeResultsInput;
+    context: OrchestratorContext
+    mergeInput: CodexMergeResultsInput
 }) {
-  try {
-    const now = isoNow();
-    const tx = db().transaction(() => {
-      upsertJob(params.context, "merging");
-      db()
-        .prepare(
-          `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+    try {
+        const now = isoNow()
+        const tx = db().transaction(() => {
+            upsertJob(params.context, "merging")
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
            VALUES (@id, @job_id, 'merge_input', 'merge-input', @created_at, @data)`,
-        )
-        .run({
-          id: makeId(),
-          job_id: params.context.jobId,
-          created_at: now,
-          data: JSON.stringify(params.mergeInput),
-        });
-    });
-    tx();
-  } catch (error) {
-    logDbError("recordMergeStart failed", error);
-  }
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.mergeInput),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordMergeStart failed", error)
+    }
 }
 
 export function recordMergeResult(params: {
-  context: OrchestratorContext;
-  mergeResult: CodexMergeResultsResult;
+    context: OrchestratorContext
+    mergeResult: CodexMergeResultsResult
 }) {
-  try {
-    const now = isoNow();
-    const tx = db().transaction(() => {
-      upsertJob(
-        params.context,
-        params.mergeResult.status === "needs_manual_review" ? "needs_manual_review" : "done",
-      );
-      db()
-        .prepare(
-          `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+    try {
+        const now = isoNow()
+        const tx = db().transaction(() => {
+            upsertJob(
+                params.context,
+                params.mergeResult.status === "needs_manual_review"
+                    ? "needs_manual_review"
+                    : "done",
+            )
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
            VALUES (@id, @job_id, 'merge_result', 'merge-result', @created_at, @data)`,
-        )
-        .run({
-          id: makeId(),
-          job_id: params.context.jobId,
-          created_at: now,
-          data: JSON.stringify(params.mergeResult),
-        });
-    });
-    tx();
-  } catch (error) {
-    logDbError("recordMergeResult failed", error);
-  }
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.mergeResult),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordMergeResult failed", error)
+    }
 }
 
 export function readDashboardData(): {
-  jobs: Array<{
-    jobId: string;
-    repoRoot: string;
-    baseBranch: string;
-    taskDescription: string;
-    userTask: string;
-    pushResult: boolean;
-    status: string;
-    startedAt: string;
-    updatedAt: string;
-    plan?: CodexPlanTaskResult;
-    mergeResult?: CodexMergeResultsResult;
-    subtasks: Array<{
-      id: string;
-      title: string;
-      description?: string;
-      parallel_group?: string;
-      status: SubtaskStatus;
-      worktree?: string;
-      branch?: string;
-      summary?: string;
-      important_files?: string[];
-      error?: string;
-      startedAt?: string;
-      finishedAt?: string;
-      updatedAt: string;
-    }>;
-    artifacts: Array<{
-      id: string;
-      type: string;
-      label?: string;
-      subtaskId?: string;
-      createdAt: string;
-      data: unknown;
-    }>;
-  }>;
+    jobs: Array<{
+        jobId: string
+        repoRoot: string
+        baseBranch: string
+        taskDescription: string
+        userTask: string
+        pushResult: boolean
+        status: string
+        startedAt: string
+        updatedAt: string
+        plan?: CodexPlanTaskResult
+        mergeResult?: CodexMergeResultsResult
+        subtasks: Array<{
+            id: string
+            title: string
+            description?: string
+            parallel_group?: string
+            status: SubtaskStatus
+            worktree?: string
+            branch?: string
+            summary?: string
+            important_files?: string[]
+            error?: string
+            startedAt?: string
+            finishedAt?: string
+            updatedAt: string
+        }>
+        artifacts: Array<{
+            id: string
+            type: string
+            label?: string
+            subtaskId?: string
+            createdAt: string
+            data: unknown
+        }>
+    }>
 } {
-  try {
-    const jobs = db()
-      .prepare("SELECT * FROM jobs ORDER BY started_at DESC")
-      .all()
-      .map((row: any) => ({
-        jobId: row.job_id as string,
-        repoRoot: row.repo_root as string,
-        baseBranch: row.base_branch as string,
-        taskDescription: row.task_description as string,
-        userTask: row.user_task as string,
-        pushResult: Boolean(row.push_result),
-        status: row.status as string,
-        startedAt: row.started_at as string,
-        updatedAt: row.updated_at as string,
-      }));
+    try {
+        const jobs = db()
+            .prepare("SELECT * FROM jobs ORDER BY started_at DESC")
+            .all()
+            .map((row: any) => ({
+                jobId: row.job_id as string,
+                repoRoot: row.repo_root as string,
+                baseBranch: row.base_branch as string,
+                taskDescription: row.task_description as string,
+                userTask: row.user_task as string,
+                pushResult: Boolean(row.push_result),
+                status: row.status as string,
+                startedAt: row.started_at as string,
+                updatedAt: row.updated_at as string,
+            }))
 
-    const subtasks = db()
-      .prepare("SELECT * FROM subtasks")
-      .all()
-      .map((row: any) => ({
-        jobId: row.job_id as string,
-        id: row.subtask_id as string,
-        title: row.title as string,
-        description: row.description ?? undefined,
-        parallel_group: row.parallel_group ?? undefined,
-        status: row.status as SubtaskStatus,
-        worktree: row.worktree ?? undefined,
-        branch: row.branch ?? undefined,
-        summary: row.summary ?? undefined,
-        important_files: row.important_files ? (JSON.parse(row.important_files) as string[]) : [],
-        error: row.error ?? undefined,
-        startedAt: row.started_at ?? undefined,
-        finishedAt: row.finished_at ?? undefined,
-        updatedAt: row.updated_at as string,
-      }));
+        const subtasks = db()
+            .prepare("SELECT * FROM subtasks")
+            .all()
+            .map((row: any) => ({
+                jobId: row.job_id as string,
+                id: row.subtask_id as string,
+                title: row.title as string,
+                description: row.description ?? undefined,
+                parallel_group: row.parallel_group ?? undefined,
+                status: row.status as SubtaskStatus,
+                worktree: row.worktree ?? undefined,
+                branch: row.branch ?? undefined,
+                summary: row.summary ?? undefined,
+                important_files: row.important_files
+                    ? (JSON.parse(row.important_files) as string[])
+                    : [],
+                error: row.error ?? undefined,
+                startedAt: row.started_at ?? undefined,
+                finishedAt: row.finished_at ?? undefined,
+                updatedAt: row.updated_at as string,
+            }))
 
-    const artifacts = db()
-      .prepare("SELECT * FROM artifacts ORDER BY created_at DESC")
-      .all()
-      .map((row: any) => ({
-        jobId: row.job_id as string,
-        id: row.id as string,
-        type: row.type as string,
-        label: row.label ?? undefined,
-        subtaskId: row.subtask_id ?? undefined,
-        createdAt: row.created_at as string,
-        data: JSON.parse(row.data as string),
-      }));
+        const artifacts = db()
+            .prepare("SELECT * FROM artifacts ORDER BY created_at DESC")
+            .all()
+            .map((row: any) => ({
+                jobId: row.job_id as string,
+                id: row.id as string,
+                type: row.type as string,
+                label: row.label ?? undefined,
+                subtaskId: row.subtask_id ?? undefined,
+                createdAt: row.created_at as string,
+                data: JSON.parse(row.data as string),
+            }))
 
-    const jobsWithData = jobs.map((job) => ({
-      ...job,
-      subtasks: subtasks.filter((s) => s.jobId === job.jobId),
-      artifacts: artifacts.filter((a) => a.jobId === job.jobId),
-      plan: artifacts.find((a) => a.jobId === job.jobId && a.type === "plan")?.data as
-        | CodexPlanTaskResult
-        | undefined,
-      mergeResult: artifacts.find((a) => a.jobId === job.jobId && a.type === "merge_result")
-        ?.data as CodexMergeResultsResult | undefined,
-    }));
+        const jobsWithData = jobs.map((job) => ({
+            ...job,
+            subtasks: subtasks.filter((s) => s.jobId === job.jobId),
+            artifacts: artifacts.filter((a) => a.jobId === job.jobId),
+            plan: artifacts.find((a) => a.jobId === job.jobId && a.type === "plan")?.data as
+                | CodexPlanTaskResult
+                | undefined,
+            mergeResult: artifacts.find((a) => a.jobId === job.jobId && a.type === "merge_result")
+                ?.data as CodexMergeResultsResult | undefined,
+        }))
 
-    return { jobs: jobsWithData };
-  } catch (error) {
-    logDbError("readDashboardData failed", error);
-    return { jobs: [] };
-  }
+        return { jobs: jobsWithData }
+    } catch (error) {
+        logDbError("readDashboardData failed", error)
+        return { jobs: [] }
+    }
 }

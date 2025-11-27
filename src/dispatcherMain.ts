@@ -1,77 +1,81 @@
-import { loadEnv } from "./loadEnv.js";
-import { runDeterministicWithLogging } from "./deterministicOrchestrator.js";
-import { ConsoleTaskReporter, createInMemoryTaskSource, runTaskDispatcher } from "./taskDispatcher.js";
-import { TelegramTaskSource } from "./taskSources/telegramTaskSource.js";
+import { loadEnv } from "./loadEnv.js"
+import { runDeterministicWithLogging } from "./deterministicOrchestrator.js"
+import {
+    ConsoleTaskReporter,
+    createInMemoryTaskSource,
+    runTaskDispatcher,
+} from "./taskDispatcher.js"
+import { TelegramTaskSource } from "./taskSources/telegramTaskSource.js"
 
 export async function main() {
-  loadEnv();
+    loadEnv()
 
-  const envTasks = process.env.DISPATCH_TASKS;
-  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-  const adminTelegramId = process.env.ADMIN_TELEGRAM_ID;
-  const orchestratorMode = process.env.ORCHESTRATOR_MODE ?? "agent";
-  const useDeterministic = orchestratorMode === "deterministic";
+    const envTasks = process.env.DISPATCH_TASKS
+    const telegramToken = process.env.TELEGRAM_BOT_TOKEN
+    const adminTelegramId = process.env.ADMIN_TELEGRAM_ID
+    const orchestratorMode = process.env.ORCHESTRATOR_MODE ?? "agent"
+    const useDeterministic = orchestratorMode === "deterministic"
 
-  const sources = [];
-  let stopWhenEmpty = true;
+    const sources = []
+    let stopWhenEmpty = true
 
-  if (telegramToken && adminTelegramId) {
-    const adminId = Number(adminTelegramId);
-    if (Number.isNaN(adminId)) {
-      console.error("ADMIN_TELEGRAM_ID must be a number.");
-      process.exit(1);
+    if (telegramToken && adminTelegramId) {
+        const adminId = Number(adminTelegramId)
+        if (Number.isNaN(adminId)) {
+            console.error("ADMIN_TELEGRAM_ID must be a number.")
+            process.exit(1)
+        }
+
+        console.log("[dispatcher] Telegram source enabled (polling bot for tasks)")
+        sources.push(
+            new TelegramTaskSource({
+                token: telegramToken,
+                adminUserId: adminId,
+            }),
+        )
+        // When polling Telegram, keep running even if no other sources provide tasks.
+        stopWhenEmpty = false
     }
 
-    console.log("[dispatcher] Telegram source enabled (polling bot for tasks)");
-    sources.push(
-      new TelegramTaskSource({
-        token: telegramToken,
-        adminUserId: adminId,
-      }),
-    );
-    // When polling Telegram, keep running even if no other sources provide tasks.
-    stopWhenEmpty = false;
-  }
+    if (envTasks) {
+        const tasks = envTasks
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((description, idx) => ({
+                id: `env-${idx + 1}`,
+                description,
+                source: "env",
+            }))
 
-  if (envTasks) {
-    const tasks = envTasks
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((description, idx) => ({
-        id: `env-${idx + 1}`,
-        description,
-        source: "env",
-      }));
-
-    if (tasks.length > 0) {
-      sources.push(createInMemoryTaskSource("env", tasks));
+        if (tasks.length > 0) {
+            sources.push(createInMemoryTaskSource("env", tasks))
+        }
     }
-  }
 
-  if (sources.length === 0) {
-    console.error(
-      [
-        "No task sources configured.",
-        'Either set TELEGRAM_BOT_TOKEN and ADMIN_TELEGRAM_ID for Telegram polling,',
-        'or provide DISPATCH_TASKS="Task 1\\nTask 2" for an in-memory run.',
-      ].join(" "),
-    );
-    process.exit(1);
-  }
+    if (sources.length === 0) {
+        console.error(
+            [
+                "No task sources configured.",
+                "Either set TELEGRAM_BOT_TOKEN and ADMIN_TELEGRAM_ID for Telegram polling,",
+                'or provide DISPATCH_TASKS="Task 1\\nTask 2" for an in-memory run.',
+            ].join(" "),
+        )
+        process.exit(1)
+    }
 
-  await runTaskDispatcher({
-    sources,
-    reporter: new ConsoleTaskReporter(),
-    stopWhenEmpty,
-    runOrchestratorFn: useDeterministic
-      ? async ({ taskDescription, baseDir }) =>
-          runDeterministicWithLogging({ userTask: taskDescription, baseDir })
-      : undefined,
-  });
+    await runTaskDispatcher({
+        sources,
+        reporter: new ConsoleTaskReporter(),
+        stopWhenEmpty,
+        runOrchestratorFn: useDeterministic
+            ? async ({ taskDescription, baseDir }) =>
+                  runDeterministicWithLogging({ userTask: taskDescription, baseDir })
+            : undefined,
+    })
 }
 
 main().catch((error) => {
-  console.error("Dispatcher failed:", error);
-  process.exit(1);
-});
+    console.error("Dispatcher failed:", error)
+    process.exit(1)
+})
