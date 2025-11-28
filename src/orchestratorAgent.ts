@@ -182,12 +182,13 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
                     parsed.status === "needs_manual_review" ? "needs_manual_review" : "done"
                 markJobStatus(context, status)
             } else {
-                markJobStatus(context, "done")
+                // If we didn't get a proper merge JSON, treat the job as failed rather than done.
+                markJobStatus(context, "failed")
             }
-            ensureTerminalJobStatus(context, "done")
+            ensureTerminalJobStatus(context, "failed")
         } catch {
-            markJobStatus(context, "done")
-            ensureTerminalJobStatus(context, "done")
+            markJobStatus(context, "failed")
+            ensureTerminalJobStatus(context, "failed")
         }
         return output
     } catch (error) {
