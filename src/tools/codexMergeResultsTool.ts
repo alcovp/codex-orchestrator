@@ -11,7 +11,13 @@ import {
     resolveJobId,
     type OrchestratorContext,
 } from "../orchestratorTypes.js"
-import { recordMergeResult, recordMergeStart } from "../db/sqliteDb.js"
+import {
+    recordMergeResult,
+    recordMergeStart,
+    recordMergeFailure,
+    ensureTerminalJobStatus,
+} from "../db/sqliteDb.js"
+import { appendJobLog } from "../jobLogger.js"
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024
@@ -459,8 +465,8 @@ export async function codexMergeResults(
     const baseBranch = params.base_branch ?? contextBaseBranch ?? DEFAULT_BASE_BRANCH
     const pushResult = Boolean(
         contextPushResult ??
-        (typeof params.push_result === "boolean" ? params.push_result : undefined) ??
-        false,
+            (typeof params.push_result === "boolean" ? params.push_result : undefined) ??
+            false,
     )
     const context = buildOrchestratorContext({
         repoRoot,
@@ -507,95 +513,114 @@ export async function codexMergeResults(
         },
     })
 
-    const mergeSummaries: Array<{ branch: string; conflicts: string[] }> = []
-    const mergedHeadSummaries: string[] = []
+    try {
+        const mergeSummaries: Array<{ branch: string; conflicts: string[] }> = []
+        const mergedHeadSummaries: string[] = []
 
-    for (const result of resolvedResults) {
-        const headSummary =
-            mergedHeadSummaries.length > 0
-                ? `HEAD already contains: ${mergedHeadSummaries.join("; ")}`
-                : "HEAD already contains: base result branch without merged subtasks."
-        const branchSummary = result.summary || "(no summary provided)"
+        for (const result of resolvedResults) {
+            const headSummary =
+                mergedHeadSummaries.length > 0
+                    ? `HEAD already contains: ${mergedHeadSummaries.join("; ")}`
+                    : "HEAD already contains: base result branch without merged subtasks."
+            const branchSummary = result.summary || "(no summary provided)"
 
-        const summary = await mergeBranchIntoResult({
-            branch: result.branch,
+            const summary = await mergeBranchIntoResult({
+                branch: result.branch,
+                mergeWorktree,
+                resultBranch,
+                exec: execImplementation,
+                userTask,
+                headSummary,
+                branchSummary,
+            })
+            mergeSummaries.push(summary)
+            mergedHeadSummaries.push(
+                `branch ${result.branch} (${result.subtask_id}): ${branchSummary}`,
+            )
+        }
+
+        const finalStatus = await runGit(
+            ["status", "--porcelain"],
             mergeWorktree,
-            resultBranch,
-            exec: execImplementation,
-            userTask,
-            headSummary,
-            branchSummary,
+            execImplementation,
+            true,
+        )
+        if (finalStatus.stdout.trim()) {
+            await runGit(["add", "-A"], mergeWorktree, execImplementation)
+            const finalCommit = await runGit(
+                [
+                    "commit",
+                    "-m",
+                    `Finalize merged subtasks into ${resultBranch}`,
+                    "--author",
+                    ORCHESTRATOR_GIT_AUTHOR,
+                ],
+                mergeWorktree,
+                execImplementation,
+                true,
+            )
+            if (finalCommit.code !== 0 && !finalCommit.stderr.includes("nothing to commit")) {
+                throw new Error(
+                    `git commit failed after merging all branches: ${finalCommit.stderr || finalCommit.stdout}`,
+                )
+            }
+        }
+
+        const touchedFiles = await collectTouchedFiles(
+            context.baseBranch,
+            mergeWorktree,
+            execImplementation,
+        )
+        const hadConflicts = mergeSummaries.some((s) => s.conflicts.length > 0)
+        const notesBase = hadConflicts
+            ? `Merged ${mergeSummaries.length} branches; conflicts were resolved via Codex where needed.`
+            : `Merged ${mergeSummaries.length} branches without conflicts.`
+
+        let pushNotes = ""
+        if (context.pushResult) {
+            const pushOutcome = await runGit(
+                ["push", "-u", "origin", resultBranch],
+                mergeWorktree,
+                execImplementation,
+                true,
+            )
+            if (pushOutcome.code !== 0) {
+                throw new Error(
+                    `git push failed for ${resultBranch}: ${pushOutcome.stderr || pushOutcome.stdout}`,
+                )
+            }
+            pushNotes = ` Pushed ${resultBranch} to origin.`
+        }
+        const notes = `${notesBase}${pushNotes}`
+
+        const mergeResult: CodexMergeResultsResult = {
+            status: "ok",
+            notes,
+            touched_files: touchedFiles,
+        }
+
+        await recordMergeResult({
+            context,
+            mergeResult,
         })
-        mergeSummaries.push(summary)
-        mergedHeadSummaries.push(`branch ${result.branch} (${result.subtask_id}): ${branchSummary}`)
-    }
 
-    const finalStatus = await runGit(
-        ["status", "--porcelain"],
-        mergeWorktree,
-        execImplementation,
-        true,
-    )
-    if (finalStatus.stdout.trim()) {
-        await runGit(["add", "-A"], mergeWorktree, execImplementation)
-        const finalCommit = await runGit(
-            [
-                "commit",
-                "-m",
-                `Finalize merged subtasks into ${resultBranch}`,
-                "--author",
-                ORCHESTRATOR_GIT_AUTHOR,
-            ],
-            mergeWorktree,
-            execImplementation,
-            true,
-        )
-        if (finalCommit.code !== 0 && !finalCommit.stderr.includes("nothing to commit")) {
-            throw new Error(
-                `git commit failed after merging all branches: ${finalCommit.stderr || finalCommit.stdout}`,
-            )
+        return mergeResult
+    } catch (error: any) {
+        const message = error?.message ?? "merge failed"
+        const payload = {
+            message,
+            stdout: error?.stdout ?? null,
+            stderr: error?.stderr ?? null,
         }
-    }
-
-    const touchedFiles = await collectTouchedFiles(
-        context.baseBranch,
-        mergeWorktree,
-        execImplementation,
-    )
-    const hadConflicts = mergeSummaries.some((s) => s.conflicts.length > 0)
-    const notesBase = hadConflicts
-        ? `Merged ${mergeSummaries.length} branches; conflicts were resolved via Codex where needed.`
-        : `Merged ${mergeSummaries.length} branches without conflicts.`
-
-    let pushNotes = ""
-    if (context.pushResult) {
-        const pushOutcome = await runGit(
-            ["push", "-u", "origin", resultBranch],
-            mergeWorktree,
-            execImplementation,
-            true,
-        )
-        if (pushOutcome.code !== 0) {
-            throw new Error(
-                `git push failed for ${resultBranch}: ${pushOutcome.stderr || pushOutcome.stdout}`,
-            )
+        await appendJobLog(`[merge] failed: ${message}`)
+        try {
+            await recordMergeFailure({ context, error: payload })
+        } catch {
+            // best-effort logging to artifacts
         }
-        pushNotes = ` Pushed ${resultBranch} to origin.`
+        ensureTerminalJobStatus(context, "failed")
+        throw error
     }
-    const notes = `${notesBase}${pushNotes}`
-
-    const mergeResult: CodexMergeResultsResult = {
-        status: "ok",
-        notes,
-        touched_files: touchedFiles,
-    }
-
-    await recordMergeResult({
-        context,
-        mergeResult,
-    })
-
-    return mergeResult
 }
 
 export const codexMergeResultsTool = tool({

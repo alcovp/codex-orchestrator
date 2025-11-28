@@ -526,6 +526,32 @@ export function recordMergeResult(params: {
     }
 }
 
+export function recordMergeFailure(params: {
+    context: OrchestratorContext
+    error: { message: string; stdout?: string | null; stderr?: string | null }
+}) {
+    try {
+        const now = isoNow()
+        const tx = db().transaction(() => {
+            upsertJob(params.context, "failed")
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'merge_error', 'merge-error', @created_at, @data)`,
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.error),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordMergeFailure failed", error)
+    }
+}
+
 export function readDashboardData(): {
     jobs: Array<{
         jobId: string

@@ -11,7 +11,14 @@ export type SubtaskStatus = "pending" | "running" | "completed" | "failed"
 
 export interface ArtifactRecord {
     id: string
-    type: "plan" | "subtask_result" | "merge_result" | "merge_input" | "analysis" | "refactor"
+    type:
+        | "plan"
+        | "subtask_result"
+        | "merge_result"
+        | "merge_input"
+        | "analysis"
+        | "refactor"
+        | "merge_error"
     label?: string
     createdAt: string
     subtaskId?: string
