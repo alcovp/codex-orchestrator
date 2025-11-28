@@ -24,8 +24,9 @@ const RefactorParamsSchema = z.object({
         .string()
         .describe("Full original user task to keep context for the refactor and downstream work."),
     analysis: z
-        .unknown()
-        .describe("Optional analysis JSON from codex_analyze_project.")
+        .object({})
+        .passthrough()
+        .describe("Optional analysis JSON from codex_analyze_project (flexible object).")
         .nullable()
         .optional(),
     worktree_name: z
