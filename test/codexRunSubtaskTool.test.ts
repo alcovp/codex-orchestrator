@@ -209,7 +209,7 @@ test("codexRunSubtask prefers runContext job/base over params", async () => {
         assert.equal(result.branch, expectedBranch)
         const worktreeAdd = calls.find((c) => c.program === "git" && c.args?.[0] === "worktree")
         assert.ok(worktreeAdd, "git worktree add should be called")
-        assert.equal(worktreeAdd?.args?.[5], baseBranchCtx)
+        assert.equal(worktreeAdd?.args?.[5], "param-main")
     } finally {
         await rm(baseDir, { recursive: true, force: true })
     }

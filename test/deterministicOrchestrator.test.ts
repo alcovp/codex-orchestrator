@@ -5,9 +5,17 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { after, test } from "node:test"
 import { runDeterministicOrchestrator } from "../src/deterministicOrchestrator.js"
 import {
+    setAnalyzeExecImplementation,
+    type CodexAnalyzeProjectResult,
+} from "../src/tools/codexAnalyzeProjectTool.js"
+import {
     setPlannerExecImplementation,
     type CodexPlanTaskResult,
 } from "../src/tools/codexPlanTaskTool.js"
+import {
+    setRefactorExecImplementation,
+    type CodexRefactorProjectResult,
+} from "../src/tools/codexRefactorProjectTool.js"
 import {
     setSubtaskExecImplementation,
     type CodexRunSubtaskResult,
@@ -15,7 +23,9 @@ import {
 import { setMergeExecImplementation } from "../src/tools/codexMergeResultsTool.js"
 
 after(() => {
+    setAnalyzeExecImplementation(null)
     setPlannerExecImplementation(null)
+    setRefactorExecImplementation(null)
     setSubtaskExecImplementation(null)
     setMergeExecImplementation(null)
 })
@@ -25,6 +35,7 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
     const repoRoot = path.join(baseDir, "repo")
     await mkdir(repoRoot, { recursive: true })
     const jobId = "job-deterministic"
+    const refactorWorktree = path.join(repoRoot, ".codex", "jobs", jobId, "worktrees", "refactor")
 
     const plan: CodexPlanTaskResult = {
         can_parallelize: true,
@@ -57,9 +68,24 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
     }
 
     const subtaskEvents: string[] = []
+    const subtaskBaseBranches: string[] = []
     let completedG1 = 0
 
-    setPlannerExecImplementation(async () => {
+    const analysis: CodexAnalyzeProjectResult = {
+        should_refactor: true,
+        reasons: ["monolith"],
+        focus_areas: [],
+        notes: null,
+    }
+
+    setAnalyzeExecImplementation(async ({ cwd }) => {
+        subtaskEvents.push(`analyze:${cwd}`)
+        return { stdout: JSON.stringify(analysis), stderr: "" }
+    })
+
+    const planExecCalls: Array<{ cwd: string; prompt: string }> = []
+    setPlannerExecImplementation(async ({ cwd, prompt }) => {
+        planExecCalls.push({ cwd, prompt })
         return { stdout: JSON.stringify(plan), stderr: "" }
     })
 
@@ -67,6 +93,7 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
         if (program === "git") {
             if (args[0] === "worktree") {
                 subtaskEvents.push(`git:${args[3]}`)
+                subtaskBaseBranches.push(args[args.length - 1])
             }
             return { stdout: "", stderr: "" }
         }
@@ -93,6 +120,43 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
         }
 
         return { stdout: JSON.stringify(result), stderr: "" }
+    })
+
+    const refactorResult: CodexRefactorProjectResult = {
+        status: "ok",
+        summary: "refactor ready",
+        branch: `refactor-${jobId}`,
+        worktree_path: refactorWorktree,
+        touched_files: ["refactor.txt"],
+        notes: null,
+    }
+
+    setRefactorExecImplementation(async ({ program, args, cwd }) => {
+        if (program === "git") {
+            if (args[0] === "rev-parse") {
+                const err: any = new Error("missing branch")
+                err.code = 1
+                err.stderr = "missing"
+                throw err
+            }
+            if (args[0] === "worktree" && args[1] === "add") {
+                const target = args.includes("-b") ? args[args.length - 2] : args[2]
+                await mkdir(target, { recursive: true })
+                return { stdout: "", stderr: "" }
+            }
+            if (args[0] === "status") {
+                return { stdout: " M refactor.txt\n", stderr: "" }
+            }
+            if (args[0] === "add" || args[0] === "commit") {
+                return { stdout: "", stderr: "" }
+            }
+            if (args[0] === "diff" && args[1] === "--name-only") {
+                return { stdout: "refactor.txt\n", stderr: "" }
+            }
+            return { stdout: "", stderr: "" }
+        }
+        subtaskEvents.push(`refactor-codex:${cwd}`)
+        return { stdout: JSON.stringify(refactorResult), stderr: "" }
     })
 
     const mergeCalls: Array<{ args: string[]; cwd: string }> = []
@@ -135,7 +199,13 @@ test("deterministic orchestrator runs plan -> grouped subtasks -> merge", async 
             userTask: "Ship feature",
             repoRoot,
             jobId,
+            enablePrefactor: true,
         })
+
+        assert.equal(result.analysis.should_refactor, true)
+        assert.equal(result.refactor?.status, "ok")
+        assert.equal(planExecCalls[0]?.cwd, refactorWorktree)
+        assert.ok(subtaskBaseBranches.every((branch) => branch === refactorResult.branch))
 
         // Plan captured
         assert.equal(result.plan.subtasks.length, 3)

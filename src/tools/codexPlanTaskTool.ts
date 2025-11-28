@@ -65,8 +65,22 @@ function resolveProjectRoot(
     projectRoot: string,
     runContext?: RunContext<OrchestratorContext>,
 ): string {
+    const explicit = projectRoot?.trim()
+
     if (runContext?.context?.repoRoot) {
-        return runContext.context.repoRoot
+        const repoRoot = path.resolve(runContext.context.repoRoot)
+
+        if (explicit) {
+            const candidate = path.isAbsolute(explicit)
+                ? path.resolve(explicit)
+                : path.resolve(repoRoot, explicit)
+
+            if (candidate === repoRoot || candidate.startsWith(repoRoot)) {
+                return candidate
+            }
+        }
+
+        return repoRoot
     }
 
     if (path.isAbsolute(projectRoot)) {

@@ -6,7 +6,9 @@ import {
     resolveRepoRoot,
     type OrchestratorContext,
 } from "./orchestratorTypes.js"
+import { codexAnalyzeProjectTool } from "./tools/codexAnalyzeProjectTool.js"
 import { codexPlanTaskTool } from "./tools/codexPlanTaskTool.js"
+import { codexRefactorProjectTool } from "./tools/codexRefactorProjectTool.js"
 import { codexRunSubtaskTool } from "./tools/codexRunSubtaskTool.js"
 import { codexMergeResultsTool } from "./tools/codexMergeResultsTool.js"
 import { runRepoCommandTool } from "./tools/runRepoCommandTool.js"
@@ -52,6 +54,11 @@ export interface OrchestratorRunOptions {
      * Base branch for all worktrees (default: main).
      */
     baseBranch?: string
+
+    /**
+     * Enable pre-plan analyze/refactor stages to prepare the code for parallel work.
+     */
+    enablePrefactor?: boolean
 }
 
 const orchestratorAgent = new Agent<OrchestratorContext>({
@@ -61,24 +68,29 @@ const orchestratorAgent = new Agent<OrchestratorContext>({
 You are the Codex Orchestrator. You are intentionally dumb: do NOT write code, do NOT analyze source files, do NOT improvise implementation details. Your job is only to call tools and pass JSON between them.
 
 Protocol (for any dev request):
-1) Always call codex_plan_task first with the user task and project_root = repo root to get a JSON plan.
-2) For each subtask from the plan, call codex_run_subtask (context already provides job_id/base_branch/result_branch). Pass user_task=<original request> so the worker keeps full context. Group by parallel_group when plan.can_parallelize=true (subtasks with the same parallel_group can run in parallel; otherwise run sequentially). Use worktree names like "task-<slug>".
-3) Collect subtask outputs as an array of { subtask_id, worktree_path (absolute), branch, summary } and call codex_merge_results (context already provides job_id/base_branch/result_branch). Merge happens in the result branch/worktree (.codex/jobs/<jobId>/worktrees/result); pushes are disabled by default, but if context.pushResult=true the merge tool will push the result branch to origin.
+0) If context.enablePrefactor is true: run codex_analyze_project (project_root = repo root, model_reasoning_effort=medium). If analysis.should_refactor is true, run codex_refactor_project (model_reasoning_effort=medium) before planning. Use the returned branch/worktree as the base for planner + subtasks + merge; if refactor fails, fall back to the original base branch/worktree. If context.enablePrefactor is false, skip directly to planning.
+1) Run codex_plan_task on the latest codebase (refactor worktree if available, else repo root) to get a JSON plan.
+2) For each subtask from the plan, call codex_run_subtask. Always pass user_task=<original request>; pass base_branch=<refactor branch if created, else context.baseBranch>. Group by parallel_group when plan.can_parallelize=true (subtasks with the same parallel_group can run in parallel; otherwise run sequentially). Use worktree names like "task-<slug>".
+3) Collect subtask outputs as an array of { subtask_id, worktree_path (absolute), branch, summary } and call codex_merge_results with base_branch=<same branch used for subtasks> and result_branch=context.resultBranch. Merge happens in the result branch/worktree (.codex/jobs/<jobId>/worktrees/result); pushes are disabled by default, but if context.pushResult=true the merge tool will push the result branch to origin.
 4) Final reply to the user MUST be derived from the merge JSON only: status + touched_files + notes (if any). Do not invent code details or add extra commentary beyond that summary.
 
 Working layout:
 - Repo root is context.repoRoot (no extra main/ folder).
+- Refactor worktree lives under .codex/jobs/<jobId>/worktrees/refactor (tool picks/creates the branch).
 - Worktrees are under .codex/jobs/<jobId>/worktrees/task-<...>; each subtask gets its own branch.
 - Shared result branch (default: result-<jobId>) is created once per job and used for the final merge; commits stay local.
 
 Example skeleton (pseudocode):
-- plan = codex_plan_task({ project_root: "<repo-root>", user_task })
+- analysis = context.enablePrefactor ? codex_analyze_project({ project_root: "<repo-root>", user_task }) : null
+- refactor = context.enablePrefactor && analysis?.should_refactor ? codex_refactor_project(...) : null
+- plan = codex_plan_task({ project_root: refactor?.worktree_path ?? "<repo-root>", user_task })
 - batches: if plan.can_parallelize then group by parallel_group else run sequentially
-- For each batch: run codex_run_subtask for each subtask in parallel (job_id=context.jobId); collect { subtask_id, worktree_path (absolute), branch, summary }
-- merge = codex_merge_results({ project_root: "<repo-root>", job_id: context.jobId, base_branch: context.baseBranch, result_branch: context.resultBranch, subtasks_results })
+- For each batch: run codex_run_subtask for each subtask in parallel (job_id=context.jobId, base_branch=refactor?.branch ?? context.baseBranch); collect { subtask_id, worktree_path (absolute), branch, summary }
+- merge = codex_merge_results({ project_root: "<repo-root>", job_id: context.jobId, base_branch: refactor?.branch ?? context.baseBranch, result_branch: context.resultBranch, subtasks_results })
 - Final reply: merge JSON as text (status, notes, touched_files)
 
 Verbose logging requirements (respond in plain text):
+- If context.enablePrefactor: After analyze, print the analysis JSON. After refactor (if run): print refactor JSON (status/branch/worktree/touched_files).
 - After planner: print "PLAN (N subtasks)" and embed the JSON plan (full or truncated if huge).
 - For each subtask: log "SUBTASK <id> @ <worktree> -> <status>" and include the returned JSON summary.
 - Before merge: show the array you pass into codex_merge_results (subtask_id/worktree_path/branch/summary).
@@ -86,11 +98,18 @@ Verbose logging requirements (respond in plain text):
 - Final reply: reiterate merge status + touched_files + notes; keep it concise but include counts (subtasks total/completed).
 
 Constraints:
-- Never skip codex_plan_task on dev work.
+- If context.enablePrefactor=true, never skip codex_analyze_project before planning. codex_plan_task must always run.
 - Never return early without running the tools above.
 - Use run_repo_command only for basic git/shell helpers if absolutely necessary; prefer codex_* tools.
 `,
-    tools: [runRepoCommandTool, codexPlanTaskTool, codexRunSubtaskTool, codexMergeResultsTool],
+    tools: [
+        runRepoCommandTool,
+        codexAnalyzeProjectTool,
+        codexRefactorProjectTool,
+        codexPlanTaskTool,
+        codexRunSubtaskTool,
+        codexMergeResultsTool,
+    ],
 })
 
 type RunImplementation = typeof run
@@ -124,6 +143,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
         taskDescription: options.taskDescription,
         userTask: options.taskDescription,
         pushResult: options.pushResult,
+        enablePrefactor: options.enablePrefactor,
     })
 
     const jobLogPath = path.join(context.jobsRoot, "orchestrator.log")
@@ -142,11 +162,12 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     await appendJobLog(header)
 
     // Make the job visible immediately in the dashboard before planner finishes.
-    markJobStatus(context, "planning")
+    markJobStatus(context, context.enablePrefactor ? "analyzing" : "planning")
 
     try {
-        console.log(`[orchestrator] planning with codex_plan_task...`)
-        await appendJobLog("planning: start codex_plan_task")
+        const prefactorLabel = context.enablePrefactor ? "prefactor:on" : "prefactor:off"
+        console.log(`[orchestrator] running agent (${prefactorLabel} -> plan -> subtasks -> merge)...`)
+        await appendJobLog(`agent: start (${prefactorLabel}) plan/subtasks/merge`)
         const result = await runImplementation(orchestratorAgent, options.taskDescription, {
             context,
             maxTurns: 30,

@@ -9,6 +9,7 @@ type ParsedArgs = {
     baseBranch?: string
     pushResult: boolean
     verboseLog: boolean
+    enablePrefactor: boolean
 }
 
 function usage(error?: string) {
@@ -22,6 +23,7 @@ function usage(error?: string) {
         "  --base-branch <branch>            Base branch for new worktrees (defaults to current branch or main)",
         "  --push-result                     Push the merged result branch to origin after merge",
         "  --verbose                         Write full Codex output to orchestrator.log (default: minimal log)",
+        "  --prefactor                       Enable pre-plan analyze+refactor stages (default: off)",
         "",
         "Example:",
         '  yarn orchestrator --repo /work/my-repo --base-branch develop --push-result --verbose "Add feature X"',
@@ -35,6 +37,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     let baseBranch: string | undefined
     let pushResult = false
     let verboseLog = false
+    let enablePrefactor = false
     const taskParts: string[] = []
     let passthrough = false
 
@@ -97,6 +100,11 @@ function parseArgs(argv: string[]): ParsedArgs {
             continue
         }
 
+        if (arg === "--prefactor" || arg === "--enable-prefactor") {
+            enablePrefactor = true
+            continue
+        }
+
         taskParts.push(arg)
     }
 
@@ -106,6 +114,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         baseBranch,
         pushResult,
         verboseLog,
+        enablePrefactor,
     }
 }
 
@@ -133,6 +142,7 @@ export async function main() {
         baseBranch: parsed.baseBranch,
         taskDescription: parsed.taskDescription,
         userTask: parsed.taskDescription,
+        enablePrefactor: parsed.enablePrefactor,
     })
 
     const options: OrchestratorRunOptions = {
@@ -142,6 +152,7 @@ export async function main() {
         pushResult: parsed.pushResult,
         verboseLog: parsed.verboseLog,
         jobId: previewContext.jobId,
+        enablePrefactor: parsed.enablePrefactor,
     }
 
     try {

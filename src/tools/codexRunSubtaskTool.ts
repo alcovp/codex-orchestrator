@@ -342,7 +342,7 @@ export async function codexRunSubtask(
     const contextBaseBranch = runContext?.context?.baseBranch
 
     const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined)
-    const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH
+    const baseBranch = params.base_branch ?? contextBaseBranch ?? DEFAULT_BASE_BRANCH
     const context = buildOrchestratorContext({
         repoRoot,
         jobId: resolvedJobId,

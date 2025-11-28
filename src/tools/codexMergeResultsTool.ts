@@ -350,7 +350,7 @@ async function resolveConflictsWithCodex({
             "exec",
             "--full-auto",
             "--config",
-            'model_reasoning_effort="minimal"',
+            'model_reasoning_effort="low"',
             "--config",
             'model_reasoning_summary="concise"',
             prompt,
@@ -456,7 +456,7 @@ export async function codexMergeResults(
     const userTask = runContext?.context?.userTask ?? runContext?.context?.taskDescription ?? ""
 
     const resolvedJobId = resolveJobId(contextJobId ?? params.job_id ?? undefined)
-    const baseBranch = contextBaseBranch ?? params.base_branch ?? DEFAULT_BASE_BRANCH
+    const baseBranch = params.base_branch ?? contextBaseBranch ?? DEFAULT_BASE_BRANCH
     const pushResult = Boolean(
         contextPushResult ??
         (typeof params.push_result === "boolean" ? params.push_result : undefined) ??

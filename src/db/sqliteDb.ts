@@ -8,9 +8,19 @@ import type {
     CodexMergeResultsInput,
     CodexMergeResultsResult,
 } from "../tools/codexMergeResultsTool.js"
+import type { CodexAnalyzeProjectResult } from "../tools/codexAnalyzeProjectTool.js"
+import type { CodexRefactorProjectResult } from "../tools/codexRefactorProjectTool.js"
 import { appendJobLog } from "../jobLogger.js"
 
-type JobStatus = "planning" | "running" | "merging" | "done" | "failed" | "needs_manual_review"
+type JobStatus =
+    | "analyzing"
+    | "refactoring"
+    | "planning"
+    | "running"
+    | "merging"
+    | "done"
+    | "failed"
+    | "needs_manual_review"
 type SubtaskStatus = "pending" | "running" | "completed" | "failed"
 
 export function resolveDbPath(): string {
@@ -109,12 +119,14 @@ export function markJobStatus(context: OrchestratorContext, status: JobStatus) {
         }
 
         const priority: Record<JobStatus, number> = {
-            failed: 3,
-            needs_manual_review: 2,
-            done: 1,
-            merging: 0,
-            running: 0,
-            planning: 0,
+            failed: 7,
+            needs_manual_review: 6,
+            done: 5,
+            merging: 4,
+            running: 3,
+            planning: 2,
+            refactoring: 1,
+            analyzing: 0,
         }
 
         if (priority[status] < priority[current]) return
@@ -257,6 +269,86 @@ export function recordPlannerOutput(params: {
         tx()
     } catch (error) {
         logDbError("recordPlannerOutput failed", error)
+    }
+}
+
+export function recordAnalysisOutput(params: {
+    context: OrchestratorContext
+    analysis: CodexAnalyzeProjectResult
+    userTask?: string
+}) {
+    try {
+        const now = isoNow()
+        const contextWithTask = {
+            ...params.context,
+            taskDescription:
+                params.context.taskDescription ||
+                params.userTask ||
+                params.context.userTask ||
+                "",
+            userTask:
+                params.context.userTask ||
+                params.userTask ||
+                params.context.taskDescription ||
+                "",
+        }
+        const tx = db().transaction(() => {
+            upsertJob(contextWithTask, "analyzing")
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'analysis', 'analysis-output', @created_at, @data)`,
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.analysis),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordAnalysisOutput failed", error)
+    }
+}
+
+export function recordRefactorOutput(params: {
+    context: OrchestratorContext
+    result: CodexRefactorProjectResult
+    userTask?: string
+}) {
+    try {
+        const now = isoNow()
+        const contextWithTask = {
+            ...params.context,
+            taskDescription:
+                params.context.taskDescription ||
+                params.userTask ||
+                params.context.userTask ||
+                "",
+            userTask:
+                params.context.userTask ||
+                params.userTask ||
+                params.context.taskDescription ||
+                "",
+        }
+        const tx = db().transaction(() => {
+            upsertJob(contextWithTask, "refactoring")
+            db()
+                .prepare(
+                    `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'refactor', 'prefactor-output', @created_at, @data)`,
+                )
+                .run({
+                    id: makeId(),
+                    job_id: params.context.jobId,
+                    created_at: now,
+                    data: JSON.stringify(params.result),
+                })
+        })
+        tx()
+    } catch (error) {
+        logDbError("recordRefactorOutput failed", error)
     }
 }
 

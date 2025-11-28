@@ -1,8 +1,16 @@
 import path from "node:path"
 import { access } from "node:fs/promises"
+import { codexAnalyzeProject, type CodexAnalyzeProjectResult } from "./tools/codexAnalyzeProjectTool.js"
 import { codexPlanTask, type CodexPlanTaskResult } from "./tools/codexPlanTaskTool.js"
 import { codexRunSubtask, type CodexRunSubtaskResult } from "./tools/codexRunSubtaskTool.js"
-import { codexMergeResults, type CodexMergeResultsResult } from "./tools/codexMergeResultsTool.js"
+import {
+    codexMergeResults,
+    type CodexMergeResultsResult,
+} from "./tools/codexMergeResultsTool.js"
+import {
+    codexRefactorProject,
+    type CodexRefactorProjectResult,
+} from "./tools/codexRefactorProjectTool.js"
 import {
     buildOrchestratorContext,
     resolveRepoRoot,
@@ -20,6 +28,7 @@ export interface DeterministicOrchestratorOptions {
     baseBranch?: string
     jobId?: string
     pushResult?: boolean
+    enablePrefactor?: boolean
 }
 
 export interface SubtaskRunOutput {
@@ -29,6 +38,8 @@ export interface SubtaskRunOutput {
 }
 
 export interface DeterministicOrchestratorResult {
+    analysis: CodexAnalyzeProjectResult
+    refactor?: CodexRefactorProjectResult
     plan: CodexPlanTaskResult
     subtaskResults: SubtaskRunOutput[]
     mergeResult: CodexMergeResultsResult
@@ -39,8 +50,13 @@ export function formatDeterministicReport(result: DeterministicOrchestratorResul
 
     const indentJson = (value: unknown) => JSON.stringify(value, null, 2)
 
-    lines.push(`PLAN (${result.plan.subtasks.length} subtasks):`)
-    lines.push(indentJson(result.plan))
+    lines.push("ANALYZE:", indentJson(result.analysis))
+
+    if (result.refactor) {
+        lines.push(`REFACTOR -> ${result.refactor.status}`, indentJson(result.refactor))
+    }
+
+    lines.push(`PLAN (${result.plan.subtasks.length} subtasks):`, indentJson(result.plan))
 
     for (const item of result.subtaskResults) {
         lines.push(
@@ -132,14 +148,49 @@ export async function runDeterministicOrchestrator(
         taskDescription: options.userTask,
         userTask: options.userTask,
         pushResult: options.pushResult,
+        enablePrefactor: options.enablePrefactor,
     })
     const projectRoot = context.repoRoot
 
     await ensureDirExists(projectRoot)
 
-    const plan = await codexPlanTask({ project_root: projectRoot, user_task: options.userTask }, {
-        context,
-    } as any)
+    const prefactorEnabled = Boolean(options.enablePrefactor)
+    const analysis = prefactorEnabled
+        ? await codexAnalyzeProject(
+              { project_root: projectRoot, user_task: options.userTask },
+              { context } as any,
+          )
+        : {
+              should_refactor: false,
+              reasons: [],
+              focus_areas: [],
+              notes: null,
+          }
+
+    let plannerRoot = projectRoot
+    let baseBranchForWorktrees = context.baseBranch
+    let refactor: CodexRefactorProjectResult | undefined
+
+    if (prefactorEnabled && analysis.should_refactor) {
+        refactor = await codexRefactorProject(
+            {
+                project_root: projectRoot,
+                user_task: options.userTask,
+                analysis,
+            },
+            { context } as any,
+        )
+
+        if (refactor.status === "ok" || refactor.status === "skipped") {
+            plannerRoot = refactor.worktree_path
+            baseBranchForWorktrees = refactor.branch
+        }
+    }
+
+    const plan = await codexPlanTask(
+        { project_root: plannerRoot, user_task: options.userTask },
+        { context } as any,
+    )
 
     const batches = buildBatches(plan)
     const takenNames = new Set<string>()
@@ -157,7 +208,7 @@ export async function runDeterministicOrchestrator(
                     project_root: projectRoot,
                     worktree_name: worktreeName,
                     job_id: context.jobId,
-                    base_branch: context.baseBranch,
+                    base_branch: baseBranchForWorktrees,
                     user_task: options.userTask,
                     subtask,
                 },
@@ -174,7 +225,7 @@ export async function runDeterministicOrchestrator(
         {
             project_root: projectRoot,
             job_id: context.jobId,
-            base_branch: context.baseBranch,
+            base_branch: baseBranchForWorktrees,
             result_branch: context.resultBranch,
             push_result: context.pushResult,
             subtasks_results: subtaskResults.map((r) => {
@@ -192,7 +243,7 @@ export async function runDeterministicOrchestrator(
         { context } as any,
     )
 
-    return { plan, subtaskResults, mergeResult }
+    return { analysis, refactor, plan, subtaskResults, mergeResult }
 }
 
 export async function runDeterministicWithLogging(

@@ -1,4 +1,6 @@
 export type JobStatus =
+    | "analyzing"
+    | "refactoring"
     | "planning"
     | "running"
     | "merging"
@@ -9,7 +11,7 @@ export type SubtaskStatus = "pending" | "running" | "completed" | "failed"
 
 export interface ArtifactRecord {
     id: string
-    type: "plan" | "subtask_result" | "merge_result" | "merge_input"
+    type: "plan" | "subtask_result" | "merge_result" | "merge_input" | "analysis" | "refactor"
     label?: string
     createdAt: string
     subtaskId?: string

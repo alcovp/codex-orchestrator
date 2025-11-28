@@ -98,7 +98,7 @@ test("codexMergeResults adds merge worktree, merges branches, and returns summar
     }
 })
 
-test("codexMergeResults prefers runContext job/base/result over params", async () => {
+test("codexMergeResults prefers runContext job/result but allows base_branch override", async () => {
     const baseDir = await mkdtemp(path.join(os.tmpdir(), "codex-merge-context-"))
     const projectRoot = path.join(baseDir, "repo")
     await mkdir(projectRoot, { recursive: true })
@@ -171,7 +171,7 @@ test("codexMergeResults prefers runContext job/base/result over params", async (
         const branchCreate = calls.find((c) => c.program === "git" && c.args?.[0] === "branch")
         assert.ok(branchCreate)
         assert.equal(branchCreate?.args?.[1], expectedResultBranch)
-        assert.equal(branchCreate?.args?.[2], baseBranchCtx)
+        assert.equal(branchCreate?.args?.[2], "param-main")
 
         assert.ok(
             !calls.some((c) => c.program === "codex"),

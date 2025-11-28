@@ -62,6 +62,7 @@ yarn orchestrator "Refactor billing module and add tests"
 
 ## Что делает оркестратор
 
+- По флагу `--prefactor` можно включить префазу analyze → (опционально) refactor: Codex с `model_reasoning_effort=medium` проверяет, мешает ли монолит параллельной работе, и при необходимости делает подготовительный рефактор (отдельный worktree/branch), чтобы планер и воркеры работали на более модульной базе.
 - Агент **Codex Orchestrator** (в `src/orchestratorAgent.ts`) использует инструменты для безопасного запуска команд в worktree.
 - Основной инструмент — `run_repo_command` (в `src/tools/runRepoCommandTool.ts`), который:
     - вычисляет `cwd = <ORCHESTRATOR_BASE_DIR>/<worktree>` (например, `.` или `.codex/jobs/<jobId>/worktrees/task-foo`);

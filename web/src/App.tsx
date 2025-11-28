@@ -4,6 +4,8 @@ import type { DbShape, JobRecord, SubtaskRecord } from "./types"
 type LoadState = "idle" | "loading" | "error" | "ready"
 
 const statusColors: Record<string, string> = {
+    analyzing: "#0ea5e9",
+    refactoring: "#8b5cf6",
     planning: "#1f7ae0",
     running: "#f1a208",
     merging: "#7c3aed",

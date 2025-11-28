@@ -45,6 +45,10 @@ export interface OrchestratorContext {
      * Whether the orchestrator should push the merged result branch to origin.
      */
     pushResult: boolean
+    /**
+     * Whether to enable pre-plan analyze/refactor stages.
+     */
+    enablePrefactor: boolean
 }
 
 export const DEFAULT_BASE_BRANCH = "main"
@@ -92,6 +96,7 @@ export function buildOrchestratorContext(options: {
     taskDescription?: string
     userTask?: string
     pushResult?: boolean
+    enablePrefactor?: boolean
 }): OrchestratorContext {
     const repoRoot = resolveRepoRoot(options.repoRoot ?? options.baseDir)
     const jobId = resolveJobId(options.jobId)
@@ -102,6 +107,7 @@ export function buildOrchestratorContext(options: {
     const resultWorktree = path.join(worktreesRoot, "result")
     const taskDescription = options.taskDescription ?? options.userTask ?? ""
     const userTask = options.userTask ?? options.taskDescription ?? ""
+    const enablePrefactor = Boolean(options.enablePrefactor)
 
     return {
         repoRoot,
@@ -115,5 +121,6 @@ export function buildOrchestratorContext(options: {
         taskDescription,
         userTask,
         pushResult: Boolean(options.pushResult),
+        enablePrefactor,
     }
 }
