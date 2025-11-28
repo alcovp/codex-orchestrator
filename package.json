@@ -9,7 +9,7 @@
     "orchestrator": "tsx src/main.ts",
     "dispatcher": "tsx src/dispatcherMain.ts",
     "dashboard": "tsx src/dashboardServer.ts",
-    "web:dev": "vite --config web/vite.config.ts",
+    "web:dev": "vite --host --config web/vite.config.ts",
     "web:build": "vite build --config web/vite.config.ts",
     "test": "node --test --import tsx test/**/*.test.ts",
     "format": "prettier --write ."

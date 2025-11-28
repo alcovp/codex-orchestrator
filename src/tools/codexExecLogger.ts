@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { appendJobLog, getJobLogPath } from "../jobLogger.js"
+import { appendJobLog, getJobLogPath, isJobLogVerbose } from "../jobLogger.js"
 
 const DEFAULT_CAPTURE_LIMIT = 2 * 1024 * 1024
 
@@ -50,6 +50,7 @@ export async function runWithCodexTee(
     const captureLimit = options.captureLimit ?? DEFAULT_CAPTURE_LIMIT
     const jobLogPath = getJobLogPath()
     const hasJobLog = Boolean(jobLogPath)
+    const streamToLog = hasJobLog && isJobLogVerbose()
     const tee = shouldTeeOutput(hasJobLog)
     const prefix = label ? `[${label}]` : `[${command}]`
     const makeLogLine = (message: string) => `${formatTimestamp()} ${prefix} ${message}`
@@ -81,15 +82,17 @@ export async function runWithCodexTee(
         }
 
         const emitLine = (kind: "stdout" | "stderr", line: string) => {
-            const taggedLine = kind === "stderr" ? `[stderr] ${line}` : line
-            if (tee) {
-                const target = kind === "stdout" ? process.stdout : process.stderr
-                target.write(`${makeLogLine(taggedLine)}\n`)
-            }
-            appendJobLogSafe(taggedLine)
-            if (kind === "stdout" && options.onStdoutLine) options.onStdoutLine(line)
-            if (kind === "stderr" && options.onStderrLine) options.onStderrLine(line)
+        const taggedLine = kind === "stderr" ? `[stderr] ${line}` : line
+        if (tee) {
+            const target = kind === "stdout" ? process.stdout : process.stderr
+            target.write(`${makeLogLine(taggedLine)}\n`)
         }
+        if (streamToLog) {
+            appendJobLogSafe(taggedLine)
+        }
+        if (kind === "stdout" && options.onStdoutLine) options.onStdoutLine(line)
+        if (kind === "stderr" && options.onStderrLine) options.onStderrLine(line)
+    }
 
         const handleData = (kind: "stdout" | "stderr") => (data: Buffer) => {
             const asString = data.toString("utf8")

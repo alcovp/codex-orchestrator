@@ -8,6 +8,7 @@ type ParsedArgs = {
     repoRoot?: string
     baseBranch?: string
     pushResult: boolean
+    verboseLog: boolean
 }
 
 function usage(error?: string) {
@@ -20,9 +21,10 @@ function usage(error?: string) {
         "  --repo, --repo-root, --project-root <path>  Absolute path to target repo (defaults to ORCHESTRATOR_BASE_DIR or cwd)",
         "  --base-branch <branch>            Base branch for new worktrees (defaults to current branch or main)",
         "  --push-result                     Push the merged result branch to origin after merge",
+        "  --verbose                         Write full Codex output to orchestrator.log (default: minimal log)",
         "",
         "Example:",
-        '  yarn orchestrator --repo /work/my-repo --base-branch develop --push-result "Add feature X"',
+        '  yarn orchestrator --repo /work/my-repo --base-branch develop --push-result --verbose "Add feature X"',
     ].filter(Boolean)
 
     console.error(lines.join("\n"))
@@ -32,6 +34,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     let repoRoot: string | undefined
     let baseBranch: string | undefined
     let pushResult = false
+    let verboseLog = false
     const taskParts: string[] = []
     let passthrough = false
 
@@ -89,6 +92,11 @@ function parseArgs(argv: string[]): ParsedArgs {
             continue
         }
 
+        if (arg === "--verbose" || arg === "--verbose-log") {
+            verboseLog = true
+            continue
+        }
+
         taskParts.push(arg)
     }
 
@@ -97,6 +105,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         repoRoot,
         baseBranch,
         pushResult,
+        verboseLog,
     }
 }
 
@@ -131,6 +140,7 @@ export async function main() {
         repoRoot: parsed.repoRoot,
         baseBranch: parsed.baseBranch,
         pushResult: parsed.pushResult,
+        verboseLog: parsed.verboseLog,
         jobId: previewContext.jobId,
     }
 

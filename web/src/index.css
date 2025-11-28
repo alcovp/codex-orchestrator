@@ -27,38 +27,34 @@ body {
 .page {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 28px 20px 60px;
+    padding: 16px 16px 48px;
 }
 
 .topbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 22px;
+    margin-bottom: 12px;
+    min-height: 40px;
 }
 
 .brand {
     font-weight: 700;
-    font-size: 24px;
+    font-size: 20px;
     letter-spacing: 0.5px;
-}
-
-.tagline {
-    color: #a0aec0;
-    font-size: 14px;
 }
 
 .controls {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 button {
     cursor: pointer;
     border: none;
     border-radius: 10px;
-    padding: 10px 16px;
+    padding: 9px 14px;
     font-weight: 600;
     background: linear-gradient(120deg, #2563eb, #14b8a6);
     color: #0b1021;
@@ -76,10 +72,11 @@ button.ghost {
     background: transparent;
     color: #e5e7eb;
     border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 8px 12px;
 }
 
 button.small {
-    padding: 6px 10px;
+    padding: 6px 9px;
     font-size: 12px;
     border-radius: 8px;
 }

@@ -3,14 +3,20 @@ import { mkdir, appendFile } from "node:fs/promises"
 
 let jobLogPath: string | null = null
 let jobLogReady = false
+let jobLogVerbose = false
 
-export function setJobLogPath(filePath: string | null) {
+export function setJobLogPath(filePath: string | null, options?: { verbose?: boolean }) {
     jobLogPath = filePath ? path.resolve(filePath) : null
     jobLogReady = false
+    jobLogVerbose = Boolean(options?.verbose)
 }
 
 export function getJobLogPath(): string | null {
     return jobLogPath
+}
+
+export function isJobLogVerbose(): boolean {
+    return jobLogVerbose
 }
 
 async function ensureReady() {

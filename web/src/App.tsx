@@ -44,6 +44,22 @@ function useDashboardData() {
 
     // Live updates via WS (active job only)
     useEffect(() => {
+        const safeClose = () => {
+            const ws = wsRef.current
+            if (!ws) return
+            ws.onclose = null
+            ws.onerror = null
+            ws.onmessage = null
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                try {
+                    ws.close()
+                } catch {
+                    /* ignore */
+                }
+            }
+            wsRef.current = null
+        }
+
         const url =
             (location.protocol === "https:" ? "wss://" : "ws://") +
             location.host +
@@ -78,11 +94,12 @@ function useDashboardData() {
             retryRef.current = setTimeout(() => {
                 setAttempt((v) => v + 1)
             }, 1500)
+            wsRef.current = null
         }
 
         return () => {
             if (retryRef.current) clearTimeout(retryRef.current)
-            wsRef.current?.close()
+            safeClose()
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [attempt])
@@ -92,11 +109,12 @@ function useDashboardData() {
     return { state, data, error, reload }
 }
 
-function StatusPill({ label }: { label: string }) {
+function StatusPill({ label, detail }: { label: string; detail?: string }) {
     const color = statusColors[label] ?? "#4b5563"
+    const text = detail ? `${label} ${detail}` : label
     return (
         <span className="pill" style={{ background: color }}>
-            {label}
+            {text}
         </span>
     )
 }
@@ -114,12 +132,18 @@ function JobHeader({
     }
 }) {
     const taskText = job.taskDescription || job.userTask || "(no task description)"
+    const totalSubtasks = job.plan?.subtasks?.length || job.subtasks.length
+    const completedSubtasks = job.subtasks.filter((s) => s.status === "completed").length
+    const progress =
+        job.status === "running" && totalSubtasks > 0
+            ? `${completedSubtasks}/${totalSubtasks}`
+            : undefined
     return (
         <div className="job-header">
             <div className="job-title">
                 <div className="job-title-main">
                     <span className="job-id">#{job.jobId}</span>
-                    <StatusPill label={job.status} />
+                    <StatusPill label={job.status} detail={progress} />
                 </div>
                 <div className="job-controls">
                     <button className="ghost small" onClick={toggles.toggleGraph}>
@@ -271,15 +295,27 @@ function ArtifactCard({ art }: { art: JobRecord["artifacts"][number] }) {
 }
 
 function JobCard({ job }: { job: JobRecord }) {
-    const [showGraph, setShowGraph] = useState(false)
+    const [showGraph, setShowGraph] = useState(job.status === "running")
     const [showArtifacts, setShowArtifacts] = useState(false)
+    const [manualGraphToggle, setManualGraphToggle] = useState(false)
+
+    useEffect(() => {
+        if (job.status === "running" && !showGraph && !manualGraphToggle) {
+            setShowGraph(true)
+        }
+    }, [job.status, showGraph, manualGraphToggle])
+
+    const handleToggleGraph = () => {
+        setManualGraphToggle(true)
+        setShowGraph((v) => !v)
+    }
     return (
         <div className="card">
             <JobHeader
                 job={job}
                 toggles={{
                     showGraph,
-                    toggleGraph: () => setShowGraph((v) => !v),
+                    toggleGraph: handleToggleGraph,
                     showArtifacts,
                     toggleArtifacts: () => setShowArtifacts((v) => !v),
                 }}
@@ -291,7 +327,7 @@ function JobCard({ job }: { job: JobRecord }) {
 }
 
 function App() {
-    const { data, error, state, reload } = useDashboardData()
+    const { data, error, state } = useDashboardData()
     const jobs = data.jobs.slice().sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 
     return (
@@ -299,12 +335,8 @@ function App() {
             <header className="topbar">
                 <div>
                     <div className="brand">Codex Orchestrator</div>
-                    <div className="tagline">Live jobs, subtasks, and artifacts</div>
                 </div>
                 <div className="controls">
-                    <button onClick={reload} className="ghost">
-                        Refresh
-                    </button>
                     <span className={`state ${state}`}>{state}</span>
                 </div>
             </header>
