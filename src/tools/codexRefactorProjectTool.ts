@@ -24,8 +24,7 @@ const RefactorParamsSchema = z.object({
         .string()
         .describe("Full original user task to keep context for the refactor and downstream work."),
     analysis: z
-        .object({})
-        .passthrough()
+        .record(z.string(), z.unknown())
         .describe("Optional analysis JSON from codex_analyze_project (flexible object).")
         .nullable()
         .optional(),
