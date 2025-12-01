@@ -18,14 +18,27 @@ const execFileAsync = promisify(execFile)
 const OUTPUT_TRUNCATE = 2000
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024
 
+const AnalyzeLikeSchema = z.object({
+    should_refactor: z.boolean(),
+    reasons: z.array(z.string()),
+    focus_areas: z.array(
+        z.object({
+            path: z.string(),
+            why: z.string(),
+            suggested_split: z.string().nullable(),
+        }),
+    ),
+    notes: z.string().nullable(),
+})
+
 const RefactorParamsSchema = z.object({
     project_root: z.string().describe("Absolute or baseDir-relative path to the repository root."),
     user_task: z
         .string()
         .describe("Full original user task to keep context for the refactor and downstream work."),
-    analysis: z
-        .record(z.string(), z.unknown())
-        .describe("Optional analysis JSON from codex_analyze_project (flexible object).")
+    analysis: AnalyzeLikeSchema.describe(
+        "Optional analysis JSON from codex_analyze_project (should match its output shape).",
+    )
         .nullable()
         .optional(),
     worktree_name: z

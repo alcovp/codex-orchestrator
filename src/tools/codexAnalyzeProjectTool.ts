@@ -17,14 +17,14 @@ const AnalyzeParamsSchema = z.object({
 const AnalyzeTargetSchema = z.object({
     path: z.string(),
     why: z.string(),
-    suggested_split: z.string().optional().nullable(),
+    suggested_split: z.string().nullable(),
 })
 
 const AnalyzeOutputSchema = z.object({
     should_refactor: z.boolean(),
     reasons: z.array(z.string()).default([]),
     focus_areas: z.array(AnalyzeTargetSchema).default([]),
-    notes: z.string().optional().nullable(),
+    notes: z.string().nullable().default(null),
 })
 
 export type CodexAnalyzeProjectInput = z.infer<typeof AnalyzeParamsSchema>
