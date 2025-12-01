@@ -353,7 +353,7 @@ async function resolveConflictsWithCodex({
             '--config',
             'model_reasoning_effort="low"',
             '--config',
-            'model_reasoning_summary="detailed"',
+            'model_reasoning_summary="none"',
             prompt,
         ],
         cwd,

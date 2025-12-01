@@ -19,6 +19,7 @@ import {
     markJobStatus,
     recordMergeResult,
     ensureTerminalJobStatus,
+    readJobStatus,
 } from "./db/sqliteDb.js"
 
 export interface OrchestratorRunOptions {
@@ -164,6 +165,13 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
     // Make the job visible immediately in the dashboard before planner finishes.
     markJobStatus(context, context.enablePrefactor ? "analyzing" : "planning")
 
+    const markFailedUnlessTerminal = () => {
+        const current = readJobStatus(context)
+        const isTerminal = current === "done" || current === "needs_manual_review"
+        if (isTerminal) return
+        markJobStatus(context, "failed")
+    }
+
     try {
         const prefactorLabel = context.enablePrefactor ? "prefactor:on" : "prefactor:off"
         console.log(`[orchestrator] running agent (${prefactorLabel} -> plan -> subtasks -> merge)...`)
@@ -183,11 +191,11 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
                 markJobStatus(context, status)
             } else {
                 // If we didn't get a proper merge JSON, treat the job as failed rather than done.
-                markJobStatus(context, "failed")
+                markFailedUnlessTerminal()
             }
             ensureTerminalJobStatus(context, "failed")
         } catch {
-            markJobStatus(context, "failed")
+            markFailedUnlessTerminal()
             ensureTerminalJobStatus(context, "failed")
         }
         return output
@@ -195,7 +203,7 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
         console.error("Failed to run orchestrator agent:", error)
         if (error instanceof Error) {
             await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
-            markJobStatus(context, "failed")
+            markFailedUnlessTerminal()
             ensureTerminalJobStatus(context, "failed")
         }
         throw error

@@ -142,6 +142,18 @@ export function markJobStatus(context: OrchestratorContext, status: JobStatus) {
     }
 }
 
+export function readJobStatus(context: OrchestratorContext): JobStatus | null {
+    try {
+        const row = db()
+            .prepare("SELECT status FROM jobs WHERE job_id = ?")
+            .get(context.jobId) as { status?: JobStatus } | undefined
+        return row?.status ?? null
+    } catch (error) {
+        logDbError("readJobStatus failed", error)
+        return null
+    }
+}
+
 export function ensureTerminalJobStatus(
     context: OrchestratorContext,
     fallback: JobStatus = "done",
