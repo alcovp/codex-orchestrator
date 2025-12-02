@@ -360,6 +360,28 @@ export function recordAnalysisProgress(params: {
     }
 }
 
+export function recordPlanProgress(params: {
+    context: OrchestratorContext
+    message: string
+}) {
+    try {
+        const now = isoNow()
+        db()
+            .prepare(
+                `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'plan_progress', 'plan-progress', @created_at, @data)`,
+            )
+            .run({
+                id: makeId(),
+                job_id: params.context.jobId,
+                created_at: now,
+                data: JSON.stringify({ message: params.message, created_at: now }),
+            })
+    } catch (error) {
+        logDbError("recordPlanProgress failed", error)
+    }
+}
+
 export function recordRefactorOutput(params: {
     context: OrchestratorContext
     result: CodexRefactorProjectResult

@@ -104,7 +104,9 @@ function buildStageNodes(job: JobRecord): StageNode[] {
         return { startedAt, finishedAt, elapsed }
     }
 
+    const analysisArtifact = getLatestArtifact("analysis")
     const analysisProgress = getLatestArtifact("analysis_progress")
+    const refactorArtifact = getLatestArtifact("refactor")
     const refactorProgress = getLatestArtifact("refactor_progress")
     const timingAnalysis = calcTiming(["analysis_progress", "analysis"], ["analysis"])
     const timingRefactor = calcTiming(["refactor_progress", "refactor"], ["refactor"])
@@ -115,13 +117,16 @@ function buildStageNodes(job: JobRecord): StageNode[] {
         ["merge_progress", "merge_input", "merge_result"],
         ["merge_result"],
     )
-    const timingPlan = calcTiming(["plan"], ["plan"])
+    const planProgress = getLatestArtifact("plan_progress")
+    const planArtifact = getLatestArtifact("plan")
+    const timingPlan = calcTiming(["plan_progress", "plan"], ["plan"])
 
     const stages: Array<{
         id: string
         title: string
         idx: number
-        artifact?: { data: any; createdAt?: string }
+        finalArtifact?: { data: any; createdAt?: string }
+        progressArtifact?: { data: any; createdAt?: string }
         reasoningBuilder: (data: any) => string | null
         fallback: string
         timing?: { startedAt?: string; finishedAt?: string; elapsed?: string }
@@ -130,17 +135,12 @@ function buildStageNodes(job: JobRecord): StageNode[] {
             id: "analysis",
             title: "Analysis",
             idx: 0,
-            artifact: getLatestArtifact("analysis")
-                ? {
-                      data: getLatestArtifact("analysis")?.data,
-                      createdAt: getLatestArtifact("analysis")?.createdAt,
-                  }
-                : analysisProgress
-                  ? {
-                        data: analysisProgress.data,
-                        createdAt: analysisProgress.createdAt,
-                    }
-                  : undefined,
+            finalArtifact: analysisArtifact
+                ? { data: analysisArtifact.data, createdAt: analysisArtifact.createdAt }
+                : undefined,
+            progressArtifact: analysisProgress
+                ? { data: analysisProgress.data, createdAt: analysisProgress.createdAt }
+                : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
                 if (typeof data.message === "string" && data.message.trim()) {
@@ -168,17 +168,12 @@ function buildStageNodes(job: JobRecord): StageNode[] {
             id: "refactor",
             title: "Refactor",
             idx: 1,
-            artifact: getLatestArtifact("refactor")
-                ? {
-                      data: getLatestArtifact("refactor")?.data,
-                      createdAt: getLatestArtifact("refactor")?.createdAt,
-                  }
-                : refactorProgress
-                  ? {
-                        data: refactorProgress.data,
-                        createdAt: refactorProgress.createdAt,
-                    }
-                  : undefined,
+            finalArtifact: refactorArtifact
+                ? { data: refactorArtifact.data, createdAt: refactorArtifact.createdAt }
+                : undefined,
+            progressArtifact: refactorProgress
+                ? { data: refactorProgress.data, createdAt: refactorProgress.createdAt }
+                : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
                 if (typeof data.message === "string" && data.message.trim()) {
@@ -200,14 +195,17 @@ function buildStageNodes(job: JobRecord): StageNode[] {
             id: "plan",
             title: "Plan",
             idx: 2,
-            artifact: getLatestArtifact("plan")
-                ? {
-                      data: getLatestArtifact("plan")?.data,
-                      createdAt: getLatestArtifact("plan")?.createdAt,
-                  }
+            finalArtifact: planArtifact
+                ? { data: planArtifact.data, createdAt: planArtifact.createdAt }
+                : undefined,
+            progressArtifact: planProgress
+                ? { data: planProgress.data, createdAt: planProgress.createdAt }
                 : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message
+                }
                 const total = Array.isArray(data?.subtasks) ? data.subtasks.length : 0
                 const titles =
                     total > 0
@@ -230,13 +228,14 @@ function buildStageNodes(job: JobRecord): StageNode[] {
             id: "merge",
             title: "Merge",
             idx: 4,
-            artifact: mergeResultArt
+            finalArtifact: mergeResultArt
                 ? { data: mergeResultArt.data, createdAt: mergeResultArt.createdAt }
-                : mergeProgressArt
-                  ? { data: mergeProgressArt.data, createdAt: mergeProgressArt.createdAt }
-                  : mergeInputArt
-                    ? { data: mergeInputArt.data, createdAt: mergeInputArt.createdAt }
-                    : undefined,
+                : undefined,
+            progressArtifact: mergeProgressArt
+                ? { data: mergeProgressArt.data, createdAt: mergeProgressArt.createdAt }
+                : mergeInputArt
+                  ? { data: mergeInputArt.data, createdAt: mergeInputArt.createdAt }
+                  : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
                 if (data.subtasks_results && Array.isArray(data.subtasks_results)) {
@@ -268,23 +267,27 @@ function buildStageNodes(job: JobRecord): StageNode[] {
     ]
 
     return stages.map((stage) => {
-        const hasArtifact = Boolean(stage.artifact)
-        const status: StageStatus = hasArtifact
+        const hasFinal = Boolean(stage.finalArtifact)
+        const hasProgressArtifact = Boolean(stage.progressArtifact)
+        const isCurrentStage = progress === stage.idx
+        const status: StageStatus = hasFinal
             ? "completed"
-            : progress < stage.idx
-              ? "pending"
-              : progress === stage.idx
-                ? "running"
-                : "completed"
+            : hasProgressArtifact
+              ? "running"
+              : progress < stage.idx
+                ? "pending"
+                : isCurrentStage
+                  ? "running"
+                  : "completed"
         let colorKey: string | undefined
-        if (stage.id === "merge" && !hasArtifact && job.status === "merging") colorKey = "merging"
-        if (stage.id === "plan" && !hasArtifact && job.status === "planning") colorKey = "planning"
-        if (stage.id === "refactor" && !hasArtifact && job.status === "refactoring")
+        if (stage.id === "merge" && status === "running") colorKey = "merging"
+        if (stage.id === "plan" && status === "running") colorKey = "planning"
+        if (stage.id === "refactor" && status === "running")
             colorKey = "refactoring"
-        if (stage.id === "analysis" && !hasArtifact && job.status === "analyzing")
+        if (stage.id === "analysis" && status === "running")
             colorKey = "analyzing"
         const reasoning =
-            stage.reasoningBuilder(stage.artifact?.data) ??
+            stage.reasoningBuilder(stage.progressArtifact?.data ?? stage.finalArtifact?.data) ??
             stage.fallback ??
             (status === "pending" ? "Waiting…" : stage.id === "merge" ? "Merging in progress…" : "Working…")
         return {
@@ -293,7 +296,7 @@ function buildStageNodes(job: JobRecord): StageNode[] {
             status,
             colorKey,
             reasoning: truncate(reasoning || stage.fallback, 900),
-            timestamp: stage.artifact?.createdAt,
+            timestamp: stage.progressArtifact?.createdAt ?? stage.finalArtifact?.createdAt,
             startedAt: stage.timing?.startedAt,
             finishedAt: stage.timing?.finishedAt,
             elapsed: stage.timing?.elapsed,

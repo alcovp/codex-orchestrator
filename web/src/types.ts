@@ -21,6 +21,7 @@ export interface ArtifactRecord {
         | "analysis_progress"
         | "refactor"
         | "refactor_progress"
+        | "plan_progress"
         | "merge_error"
     label?: string
     createdAt: string

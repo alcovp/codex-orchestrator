@@ -5,7 +5,7 @@ import path from "node:path"
 import type { OrchestratorContext } from "../orchestratorTypes.js"
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js"
 import { appendJobLog } from "../jobLogger.js"
-import { recordPlannerOutput } from "../db/sqliteDb.js"
+import { markJobStatus, recordPlanProgress, recordPlannerOutput } from "../db/sqliteDb.js"
 
 const OUTPUT_TRUNCATE = 2000
 
@@ -43,15 +43,19 @@ type PlannerExec = (args: {
     cwd: string
     prompt: string
     label?: string
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
 }) => Promise<{ stdout: string; stderr: string }>
 
-const defaultExec: PlannerExec = async ({ cwd, prompt, label }) => {
+const defaultExec: PlannerExec = async ({ cwd, prompt, label, onStdoutLine, onStderrLine }) => {
     return runWithCodexTee({
         command: "codex",
         args: ["exec", "--full-auto", prompt],
         cwd,
         label: label ?? "codex-plan",
         captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+        onStdoutLine,
+        onStderrLine,
     })
 }
 
@@ -211,14 +215,54 @@ export async function codexPlanTask(
     let stdout = ""
     let stderr = ""
 
+    const reasoningLines: string[] = []
+    let lastFlush = 0
+    const flushReasoning = (force = false) => {
+        if (!runContext?.context) return
+        const now = Date.now()
+        if (!force && now - lastFlush < 1000) return
+        lastFlush = now
+        const payload = reasoningLines.slice(-8).join("\n")
+        if (!payload) return
+        try {
+            recordPlanProgress({ context: runContext.context, message: payload })
+        } catch {
+            /* ignore logging failures */
+        }
+    }
+    const captureLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        reasoningLines.push(trimmed)
+        if (reasoningLines.length > 20) reasoningLines.splice(0, reasoningLines.length - 20)
+        flushReasoning()
+    }
+
+    if (runContext?.context) {
+        try {
+            markJobStatus(runContext.context, "planning")
+            recordPlanProgress({ context: runContext.context, message: "Planning started" })
+        } catch {
+            /* ignore logging failures */
+        }
+    }
+
     try {
-        const result = await execImplementation({ cwd: projectRoot, prompt, label: "codex-plan" })
+        const result = await execImplementation({
+            cwd: projectRoot,
+            prompt,
+            label: "codex-plan",
+            onStdoutLine: captureLine,
+            onStderrLine: captureLine,
+        })
         stdout = result.stdout ?? ""
         stderr = result.stderr ?? ""
         const plan = normalizeOutput(extractJsonObject(stdout || stderr))
+        flushReasoning(true)
         await persistPlan(plan, runContext?.context, params.user_task)
         return plan
     } catch (error: any) {
+        flushReasoning(true)
         stdout = (error?.stdout ?? stdout ?? "") as string
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
 

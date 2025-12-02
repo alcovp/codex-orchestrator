@@ -201,11 +201,34 @@ export async function codexAnalyzeProject(
     let stderr = ""
 
     const reasoningLines: string[] = []
+    let lastFlush = 0
+    const flushReasoning = (force = false) => {
+        if (!runContext?.context) return
+        const now = Date.now()
+        if (!force && now - lastFlush < 1000) return
+        lastFlush = now
+        const payload = reasoningLines.slice(-8).join("\n")
+        if (!payload) return
+        try {
+            recordAnalysisProgress({ context: runContext.context, message: payload })
+        } catch {
+            /* ignore logging failures */
+        }
+    }
     const captureLine = (line: string) => {
         const trimmed = line.trim()
         if (!trimmed) return
         reasoningLines.push(trimmed)
-        if (reasoningLines.length > 12) reasoningLines.splice(0, reasoningLines.length - 12)
+        if (reasoningLines.length > 20) reasoningLines.splice(0, reasoningLines.length - 20)
+        flushReasoning()
+    }
+
+    if (runContext?.context) {
+        try {
+            recordAnalysisProgress({ context: runContext.context, message: "Analysis started" })
+        } catch {
+            /* ignore logging failures */
+        }
     }
 
     try {
@@ -220,19 +243,11 @@ export async function codexAnalyzeProject(
         stdout = result.stdout ?? ""
         stderr = result.stderr ?? ""
         const analysis = normalizeOutput(extractJsonObject(stdout || stderr))
+        flushReasoning(true)
         await persistAnalysis(analysis, runContext?.context, params.user_task)
         return analysis
     } catch (error: any) {
-        if (reasoningLines.length > 0 && runContext?.context) {
-            try {
-                await recordAnalysisProgress({
-                    context: runContext.context,
-                    message: reasoningLines.slice(-6).join("\n"),
-                })
-            } catch {
-                /* swallow */
-            }
-        }
+        flushReasoning(true)
         stdout = (error?.stdout ?? stdout ?? "") as string
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
 

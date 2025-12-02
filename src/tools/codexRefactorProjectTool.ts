@@ -376,15 +376,35 @@ export async function codexRefactorProject(
     let stderr = ""
 
     const reasoningLines: string[] = []
+    let lastFlush = 0
+    const flushReasoning = (force = false) => {
+        const now = Date.now()
+        if (!force && now - lastFlush < 1000) return
+        lastFlush = now
+        const payload = reasoningLines.slice(-8).join("\n")
+        if (!payload) return
+        try {
+            recordRefactorProgress({ context, message: payload })
+        } catch {
+            /* ignore logging failures */
+        }
+    }
     const captureLine = (line: string) => {
         const trimmed = line.trim()
         if (!trimmed) return
         reasoningLines.push(trimmed)
-        if (reasoningLines.length > 12) reasoningLines.splice(0, reasoningLines.length - 12)
+        if (reasoningLines.length > 20) reasoningLines.splice(0, reasoningLines.length - 20)
+        flushReasoning()
     }
 
     try {
         markJobStatus(context, "refactoring")
+        recordRefactorProgress({ context, message: "Refactor started" })
+    } catch {
+        /* ignore logging failures */
+    }
+
+    try {
         const codexArgs = [
             "exec",
             "--full-auto",
@@ -407,19 +427,11 @@ export async function codexRefactorProject(
         await commitIfNeeded({ cwd: worktreeDir, exec: execImplementation, jobId: context.jobId })
         const touched = await listTouchedFiles(context.baseBranch, worktreeDir, execImplementation)
         const merged = { ...parsed, branch: branchName, worktree_path: worktreeDir, touched_files: touched }
+        flushReasoning(true)
         await persistRefactor(merged, context, params.user_task)
         return merged
     } catch (error: any) {
-        if (reasoningLines.length > 0) {
-            try {
-                await recordRefactorProgress({
-                    context,
-                    message: reasoningLines.slice(-6).join("\n"),
-                })
-            } catch {
-                /* ignore */
-            }
-        }
+        flushReasoning(true)
         stdout = (error?.stdout ?? stdout ?? "") as string
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
 
