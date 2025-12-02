@@ -234,6 +234,15 @@ button.small {
     gap: 10px;
 }
 
+.stages {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 10px;
+}
+
 .node {
     display: grid;
     grid-template-columns: 10px 1fr;
@@ -301,6 +310,8 @@ button.small {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 10px;
+    max-height: 150px;
+    overflow: auto;
     color: #e5e7eb;
     font-size: 12px;
     line-height: 1.5;

@@ -183,16 +183,28 @@ async function ensureResultBranch(
     exec: MergeExec,
 ) {
     try {
-        await exec({ program: 'git', args: ['rev-parse', '--verify', resultBranch], cwd: repoRoot })
+        await exec({
+            program: 'git',
+            args: ['rev-parse', '--verify', '--quiet', resultBranch],
+            cwd: repoRoot,
+        })
         return
     } catch {
         // fall through
     }
-    await exec({
-        program: 'git',
-        args: ['branch', resultBranch, baseBranch],
-        cwd: repoRoot,
-    })
+    try {
+        await exec({
+            program: 'git',
+            args: ['branch', resultBranch, baseBranch],
+            cwd: repoRoot,
+        })
+    } catch (error: any) {
+        const msg = `${error?.stderr || error?.stdout || error?.message || ''}`
+        if (msg.includes('already exists')) {
+            return
+        }
+        throw error
+    }
 }
 
 async function runGit(

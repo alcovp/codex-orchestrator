@@ -194,13 +194,25 @@ async function ensureResultBranch(
     exec: SubtaskExec,
 ) {
     try {
-        await exec({ program: "git", args: ["rev-parse", "--verify", branch], cwd: repoRoot })
+        await exec({
+            program: "git",
+            args: ["rev-parse", "--verify", "--quiet", branch],
+            cwd: repoRoot,
+        })
         return
     } catch {
         // branch is missing, fall through to create it
     }
 
-    await exec({ program: "git", args: ["branch", branch, baseBranch], cwd: repoRoot })
+    try {
+        await exec({ program: "git", args: ["branch", branch, baseBranch], cwd: repoRoot })
+    } catch (error: any) {
+        const msg = `${error?.stderr || error?.stdout || error?.message || ""}`
+        if (msg.includes("already exists")) {
+            return
+        }
+        throw error
+    }
 }
 
 async function detectCurrentBranch(worktreeDir: string, exec: SubtaskExec): Promise<string | null> {

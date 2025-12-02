@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { DbShape, JobRecord, SubtaskRecord } from "./types"
 
 type LoadState = "idle" | "loading" | "error" | "ready"
+type StageStatus = "pending" | "running" | "completed" | "failed"
+
+type StageNode = {
+    id: string
+    title: string
+    status: StageStatus
+    reasoning: string
+    timestamp?: string
+}
 
 const statusColors: Record<string, string> = {
     analyzing: "#0ea5e9",
@@ -14,6 +23,172 @@ const statusColors: Record<string, string> = {
     needs_manual_review: "#f97316",
     pending: "#6b7280",
     completed: "#0ea85a",
+}
+
+function truncate(text: string, limit = 800) {
+    if (!text) return ""
+    return text.length > limit ? `${text.slice(0, limit)} …` : text
+}
+
+function statusOrder(status: JobRecord["status"]): number {
+    switch (status) {
+        case "analyzing":
+            return 0
+        case "refactoring":
+            return 1
+        case "planning":
+            return 2
+        case "running":
+            return 3
+        case "merging":
+            return 4
+        case "done":
+        case "needs_manual_review":
+        case "failed":
+            return 5
+        default:
+            return 0
+    }
+}
+
+function buildStageNodes(job: JobRecord): StageNode[] {
+    const artifacts = job.artifacts ?? []
+    const getArtifact = (type: string) => artifacts.find((a) => a.type === type)
+    const progress = statusOrder(job.status)
+
+    const stages: Array<{
+        id: string
+        title: string
+        idx: number
+        artifact?: { data: any; createdAt?: string }
+        reasoningBuilder: (data: any) => string | null
+        fallback: string
+    }> = [
+        {
+            id: "analysis",
+            title: "Analysis",
+            idx: 0,
+            artifact: getArtifact("analysis")
+                ? {
+                      data: getArtifact("analysis")?.data,
+                      createdAt: getArtifact("analysis")?.createdAt,
+                  }
+                : undefined,
+            reasoningBuilder: (data: any) => {
+                if (!data) return null
+                if (typeof data === "string") return data
+                const parts: string[] = []
+                if (Array.isArray(data?.reasons) && data.reasons.length) {
+                    parts.push(`Reasons: ${data.reasons.join(" | ")}`)
+                }
+                if (Array.isArray(data?.focus_areas) && data.focus_areas.length) {
+                    const focus = data.focus_areas
+                        .slice(0, 2)
+                        .map((f: any) => `${f.path}: ${f.suggested_split || f.why}`)
+                        .join(" | ")
+                    if (focus) parts.push(`Focus: ${focus}${data.focus_areas.length > 2 ? " …" : ""}`)
+                }
+                if (data?.notes) parts.push(`Notes: ${data.notes}`)
+                return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
+            },
+            fallback: "Waiting for analysis output",
+        },
+        {
+            id: "refactor",
+            title: "Refactor",
+            idx: 1,
+            artifact: getArtifact("refactor")
+                ? {
+                      data: getArtifact("refactor")?.data,
+                      createdAt: getArtifact("refactor")?.createdAt,
+                  }
+                : undefined,
+            reasoningBuilder: (data: any) => {
+                if (!data) return null
+                const parts: string[] = []
+                if (data.status) parts.push(`Status: ${data.status}`)
+                if (data.branch) parts.push(`Branch: ${data.branch}`)
+                if (data.notes) parts.push(`Notes: ${data.notes}`)
+                if (Array.isArray(data.touched_files) && data.touched_files.length) {
+                    parts.push(`Touched: ${data.touched_files.slice(0, 5).join(", ")}`)
+                }
+                return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
+            },
+            fallback: "Refactor stage pending or skipped",
+        },
+        {
+            id: "plan",
+            title: "Plan",
+            idx: 2,
+            artifact: getArtifact("plan")
+                ? {
+                      data: getArtifact("plan")?.data,
+                      createdAt: getArtifact("plan")?.createdAt,
+                  }
+                : undefined,
+            reasoningBuilder: (data: any) => {
+                if (!data) return null
+                const total = Array.isArray(data?.subtasks) ? data.subtasks.length : 0
+                const titles =
+                    total > 0
+                        ? data.subtasks
+                              .slice(0, 4)
+                              .map((s: any) => s.title || s.id)
+                              .join(" | ")
+                        : null
+                const parts = [
+                    `Subtasks: ${total}`,
+                    `Parallel: ${data?.can_parallelize ? "yes" : "no"}`,
+                ]
+                if (titles) parts.push(`Items: ${titles}${total > 4 ? " …" : ""}`)
+                return parts.join("\n")
+            },
+            fallback: "Waiting for planner",
+        },
+        {
+            id: "merge",
+            title: "Merge",
+            idx: 4,
+            artifact: getArtifact("merge_result")
+                ? {
+                      data: getArtifact("merge_result")?.data,
+                      createdAt: getArtifact("merge_result")?.createdAt,
+                  }
+                : undefined,
+            reasoningBuilder: (data: any) => {
+                if (!data) return null
+                const parts: string[] = []
+                if (data.status) parts.push(`Status: ${data.status}`)
+                if (data.notes) parts.push(data.notes)
+                if (Array.isArray(data.touched_files) && data.touched_files.length) {
+                    parts.push(`Files: ${data.touched_files.slice(0, 5).join(", ")}`)
+                }
+                return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
+            },
+            fallback: "Waiting for merge",
+        },
+    ]
+
+    return stages.map((stage) => {
+        const hasArtifact = Boolean(stage.artifact)
+        const status: StageStatus = hasArtifact
+            ? "completed"
+            : progress < stage.idx
+              ? "pending"
+              : progress === stage.idx
+                ? "running"
+                : "completed"
+        const reasoning =
+            stage.reasoningBuilder(stage.artifact?.data) ??
+            (status === "pending" ? stage.fallback : "No reasoning captured")
+        return {
+            id: stage.id,
+            title: stage.title,
+            status,
+            reasoning: truncate(reasoning || stage.fallback, 900),
+            timestamp: stage.artifact?.createdAt,
+        }
+    })
 }
 
 function useDashboardData() {
@@ -207,6 +382,34 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
     )
 }
 
+function StageNodeView({ stage }: { stage: StageNode }) {
+    const color = statusColors[stage.status] ?? "#4b5563"
+    const showReasoning = stage.status !== "completed" && Boolean(stage.reasoning)
+    return (
+        <div className="node">
+            <div className="node-status" style={{ background: color }} />
+            <div className="node-body">
+                <div className="node-title">
+                    {stage.title} <span className="node-label">{stage.status}</span>
+                </div>
+                <div className="node-meta">
+                    {stage.timestamp && (
+                        <span>Updated: {new Date(stage.timestamp).toLocaleTimeString()}</span>
+                    )}
+                </div>
+                {showReasoning && (
+                    <div className="node-reasoning">
+                        <div className="node-reasoning-label">last_reasoning</div>
+                        <pre className="node-reasoning-body" key={stage.reasoning}>
+                            {stage.reasoning}
+                        </pre>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
 function Graph({ job }: { job: JobRecord }) {
     const lanes = useMemo(() => {
         const planSubtasks = job.plan?.subtasks ?? []
@@ -297,6 +500,9 @@ function ArtifactCard({ art }: { art: JobRecord["artifacts"][number] }) {
 }
 
 function JobCard({ job }: { job: JobRecord }) {
+    const stageNodes = useMemo(() => buildStageNodes(job), [job])
+    const preMergeStages = stageNodes.filter((s) => s.id !== "merge")
+    const mergeStage = stageNodes.find((s) => s.id === "merge")
     const [showGraph, setShowGraph] = useState(job.status === "running")
     const [showArtifacts, setShowArtifacts] = useState(false)
     const [manualGraphToggle, setManualGraphToggle] = useState(false)
@@ -322,7 +528,19 @@ function JobCard({ job }: { job: JobRecord }) {
                     toggleArtifacts: () => setShowArtifacts((v) => !v),
                 }}
             />
+            {preMergeStages.length > 0 && (
+                <div className="stages">
+                    {preMergeStages.map((stage) => (
+                        <StageNodeView key={stage.id} stage={stage} />
+                    ))}
+                </div>
+            )}
             {showGraph && <Graph job={job} />}
+            {mergeStage && (
+                <div className="stages">
+                    <StageNodeView key={mergeStage.id} stage={mergeStage} />
+                </div>
+            )}
             {showArtifacts && <Artifacts job={job} />}
         </div>
     )
