@@ -338,6 +338,28 @@ export function recordAnalysisOutput(params: {
     }
 }
 
+export function recordAnalysisProgress(params: {
+    context: OrchestratorContext
+    message: string
+}) {
+    try {
+        const now = isoNow()
+        db()
+            .prepare(
+                `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'analysis_progress', 'analysis-progress', @created_at, @data)`,
+            )
+            .run({
+                id: makeId(),
+                job_id: params.context.jobId,
+                created_at: now,
+                data: JSON.stringify({ message: params.message, created_at: now }),
+            })
+    } catch (error) {
+        logDbError("recordAnalysisProgress failed", error)
+    }
+}
+
 export function recordRefactorOutput(params: {
     context: OrchestratorContext
     result: CodexRefactorProjectResult
@@ -375,6 +397,28 @@ export function recordRefactorOutput(params: {
         tx()
     } catch (error) {
         logDbError("recordRefactorOutput failed", error)
+    }
+}
+
+export function recordRefactorProgress(params: {
+    context: OrchestratorContext
+    message: string
+}) {
+    try {
+        const now = isoNow()
+        db()
+            .prepare(
+                `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+           VALUES (@id, @job_id, 'refactor_progress', 'refactor-progress', @created_at, @data)`,
+            )
+            .run({
+                id: makeId(),
+                job_id: params.context.jobId,
+                created_at: now,
+                data: JSON.stringify({ message: params.message, created_at: now }),
+            })
+    } catch (error) {
+        logDbError("recordRefactorProgress failed", error)
     }
 }
 
@@ -549,6 +593,28 @@ export function recordMergeResult(params: {
         tx()
     } catch (error) {
         logDbError("recordMergeResult failed", error)
+    }
+}
+
+export function recordMergeProgress(params: {
+    context: OrchestratorContext
+    message: string
+}) {
+    try {
+        const now = isoNow()
+        db()
+            .prepare(
+                `INSERT INTO artifacts (id, job_id, type, label, created_at, data)
+         VALUES (@id, @job_id, 'merge_progress', 'merge-progress', @created_at, @data)`,
+            )
+            .run({
+                id: makeId(),
+                job_id: params.context.jobId,
+                created_at: now,
+                data: JSON.stringify({ message: params.message, created_at: now }),
+            })
+    } catch (error) {
+        logDbError("recordMergeProgress failed", error)
     }
 }
 

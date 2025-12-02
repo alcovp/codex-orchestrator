@@ -16,8 +16,11 @@ export interface ArtifactRecord {
         | "subtask_result"
         | "merge_result"
         | "merge_input"
+        | "merge_progress"
         | "analysis"
+        | "analysis_progress"
         | "refactor"
+        | "refactor_progress"
         | "merge_error"
     label?: string
     createdAt: string
@@ -71,6 +74,7 @@ export interface JobRecord {
         status: string
         notes: string
         touched_files: string[]
+        last_reasoning?: string | null
     }
     subtasks: SubtaskRecord[]
     artifacts: ArtifactRecord[]

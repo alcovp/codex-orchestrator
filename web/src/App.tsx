@@ -10,19 +10,23 @@ type StageNode = {
     status: StageStatus
     reasoning: string
     timestamp?: string
+    colorKey?: string
+    startedAt?: string
+    finishedAt?: string
+    elapsed?: string
 }
 
 const statusColors: Record<string, string> = {
-    analyzing: "#0ea5e9",
-    refactoring: "#8b5cf6",
-    planning: "#1f7ae0",
-    running: "#f1a208",
-    merging: "#7c3aed",
-    done: "#0ea85a",
-    failed: "#e11d48",
-    needs_manual_review: "#f97316",
-    pending: "#6b7280",
-    completed: "#0ea85a",
+    analyzing: "#0ea5e9", // cyan
+    refactoring: "#8b5cf6", // violet
+    planning: "#1f7ae0", // blue
+    running: "#f59e0b", // amber
+    merging: "#7c3aed", // purple
+    done: "#10b981", // green
+    failed: "#ef4444", // red
+    needs_manual_review: "#f97316", // orange
+    pending: "#6b7280", // gray
+    completed: "#10b981", // green
 }
 
 function truncate(text: string, limit = 800) {
@@ -51,10 +55,67 @@ function statusOrder(status: JobRecord["status"]): number {
     }
 }
 
+function formatTime(ts?: string) {
+    if (!ts) return null
+    try {
+        return new Date(ts).toLocaleTimeString()
+    } catch {
+        return null
+    }
+}
+
+function elapsedMs(start?: string, end?: string) {
+    if (!start) return null
+    const s = new Date(start).getTime()
+    const e = end ? new Date(end).getTime() : Date.now()
+    const delta = e - s
+    if (Number.isNaN(delta) || delta < 0) return null
+    const minutes = Math.floor(delta / 60000)
+    const seconds = Math.floor((delta % 60000) / 1000)
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
+
 function buildStageNodes(job: JobRecord): StageNode[] {
     const artifacts = job.artifacts ?? []
-    const getArtifact = (type: string) => artifacts.find((a) => a.type === type)
     const progress = statusOrder(job.status)
+
+    const getLatestArtifact = (type: string) => {
+        const filtered = artifacts.filter((a) => a.type === type)
+        if (filtered.length === 0) return undefined
+        return filtered.reduce((latest, current) =>
+            new Date(current.createdAt).getTime() > new Date(latest.createdAt).getTime()
+                ? current
+                : latest,
+        )
+    }
+    const getStageArtifacts = (types: string[]) =>
+        artifacts
+            .filter((a) => types.includes(a.type))
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+    const calcTiming = (types: string[], finalTypes: string[]) => {
+        const list = getStageArtifacts(types)
+        const startedAt = list[0]?.createdAt
+        const final = list
+            .filter((a) => finalTypes.includes(a.type))
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        const finishedAt = final[final.length - 1]?.createdAt
+        const elapsed = elapsedMs(startedAt, finishedAt) ?? undefined
+        return { startedAt, finishedAt, elapsed }
+    }
+
+    const analysisProgress = getLatestArtifact("analysis_progress")
+    const refactorProgress = getLatestArtifact("refactor_progress")
+    const timingAnalysis = calcTiming(["analysis_progress", "analysis"], ["analysis"])
+    const timingRefactor = calcTiming(["refactor_progress", "refactor"], ["refactor"])
+    const mergeResultArt = getLatestArtifact("merge_result")
+    const mergeInputArt = getLatestArtifact("merge_input")
+    const mergeProgressArt = getLatestArtifact("merge_progress")
+    const timingMerge = calcTiming(
+        ["merge_progress", "merge_input", "merge_result"],
+        ["merge_result"],
+    )
+    const timingPlan = calcTiming(["plan"], ["plan"])
 
     const stages: Array<{
         id: string
@@ -63,19 +124,28 @@ function buildStageNodes(job: JobRecord): StageNode[] {
         artifact?: { data: any; createdAt?: string }
         reasoningBuilder: (data: any) => string | null
         fallback: string
+        timing?: { startedAt?: string; finishedAt?: string; elapsed?: string }
     }> = [
         {
             id: "analysis",
             title: "Analysis",
             idx: 0,
-            artifact: getArtifact("analysis")
+            artifact: getLatestArtifact("analysis")
                 ? {
-                      data: getArtifact("analysis")?.data,
-                      createdAt: getArtifact("analysis")?.createdAt,
+                      data: getLatestArtifact("analysis")?.data,
+                      createdAt: getLatestArtifact("analysis")?.createdAt,
                   }
-                : undefined,
+                : analysisProgress
+                  ? {
+                        data: analysisProgress.data,
+                        createdAt: analysisProgress.createdAt,
+                    }
+                  : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message
+                }
                 if (typeof data === "string") return data
                 const parts: string[] = []
                 if (Array.isArray(data?.reasons) && data.reasons.length) {
@@ -92,19 +162,28 @@ function buildStageNodes(job: JobRecord): StageNode[] {
                 return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
             },
             fallback: "Waiting for analysis output",
+            timing: timingAnalysis,
         },
         {
             id: "refactor",
             title: "Refactor",
             idx: 1,
-            artifact: getArtifact("refactor")
+            artifact: getLatestArtifact("refactor")
                 ? {
-                      data: getArtifact("refactor")?.data,
-                      createdAt: getArtifact("refactor")?.createdAt,
+                      data: getLatestArtifact("refactor")?.data,
+                      createdAt: getLatestArtifact("refactor")?.createdAt,
                   }
-                : undefined,
+                : refactorProgress
+                  ? {
+                        data: refactorProgress.data,
+                        createdAt: refactorProgress.createdAt,
+                    }
+                  : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message
+                }
                 const parts: string[] = []
                 if (data.status) parts.push(`Status: ${data.status}`)
                 if (data.branch) parts.push(`Branch: ${data.branch}`)
@@ -115,15 +194,16 @@ function buildStageNodes(job: JobRecord): StageNode[] {
                 return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
             },
             fallback: "Refactor stage pending or skipped",
+            timing: timingRefactor,
         },
         {
             id: "plan",
             title: "Plan",
             idx: 2,
-            artifact: getArtifact("plan")
+            artifact: getLatestArtifact("plan")
                 ? {
-                      data: getArtifact("plan")?.data,
-                      createdAt: getArtifact("plan")?.createdAt,
+                      data: getLatestArtifact("plan")?.data,
+                      createdAt: getLatestArtifact("plan")?.createdAt,
                   }
                 : undefined,
             reasoningBuilder: (data: any) => {
@@ -144,19 +224,36 @@ function buildStageNodes(job: JobRecord): StageNode[] {
                 return parts.join("\n")
             },
             fallback: "Waiting for planner",
+            timing: timingPlan,
         },
         {
             id: "merge",
             title: "Merge",
             idx: 4,
-            artifact: getArtifact("merge_result")
-                ? {
-                      data: getArtifact("merge_result")?.data,
-                      createdAt: getArtifact("merge_result")?.createdAt,
-                  }
-                : undefined,
+            artifact: mergeResultArt
+                ? { data: mergeResultArt.data, createdAt: mergeResultArt.createdAt }
+                : mergeProgressArt
+                  ? { data: mergeProgressArt.data, createdAt: mergeProgressArt.createdAt }
+                  : mergeInputArt
+                    ? { data: mergeInputArt.data, createdAt: mergeInputArt.createdAt }
+                    : undefined,
             reasoningBuilder: (data: any) => {
                 if (!data) return null
+                if (data.subtasks_results && Array.isArray(data.subtasks_results)) {
+                    const total = data.subtasks_results.length
+                    const branches = data.subtasks_results
+                        .map((r: any) => r.branch || r.subtask_id || "")
+                        .filter(Boolean)
+                        .slice(0, 5)
+                        .join(", ")
+                    return `Merge input: ${total} branches${branches ? ` (${branches}${total > 5 ? " …" : ""})` : ""}`
+                }
+                if (typeof data.last_reasoning === "string" && data.last_reasoning.trim()) {
+                    return data.last_reasoning
+                }
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message
+                }
                 const parts: string[] = []
                 if (data.status) parts.push(`Status: ${data.status}`)
                 if (data.notes) parts.push(data.notes)
@@ -165,7 +262,8 @@ function buildStageNodes(job: JobRecord): StageNode[] {
                 }
                 return parts.join("\n") || truncate(JSON.stringify(data, null, 2))
             },
-            fallback: "Waiting for merge",
+            fallback: job.status === "merging" ? "Merging in progress…" : "Waiting for merge",
+            timing: timingMerge,
         },
     ]
 
@@ -178,15 +276,27 @@ function buildStageNodes(job: JobRecord): StageNode[] {
               : progress === stage.idx
                 ? "running"
                 : "completed"
+        let colorKey: string | undefined
+        if (stage.id === "merge" && !hasArtifact && job.status === "merging") colorKey = "merging"
+        if (stage.id === "plan" && !hasArtifact && job.status === "planning") colorKey = "planning"
+        if (stage.id === "refactor" && !hasArtifact && job.status === "refactoring")
+            colorKey = "refactoring"
+        if (stage.id === "analysis" && !hasArtifact && job.status === "analyzing")
+            colorKey = "analyzing"
         const reasoning =
             stage.reasoningBuilder(stage.artifact?.data) ??
-            (status === "pending" ? stage.fallback : "No reasoning captured")
+            stage.fallback ??
+            (status === "pending" ? "Waiting…" : stage.id === "merge" ? "Merging in progress…" : "Working…")
         return {
             id: stage.id,
             title: stage.title,
             status,
+            colorKey,
             reasoning: truncate(reasoning || stage.fallback, 900),
             timestamp: stage.artifact?.createdAt,
+            startedAt: stage.timing?.startedAt,
+            finishedAt: stage.timing?.finishedAt,
+            elapsed: stage.timing?.elapsed,
         }
     })
 }
@@ -200,23 +310,25 @@ function useDashboardData() {
     const [reloadKey, setReloadKey] = useState(0)
     const [attempt, setAttempt] = useState(0)
 
+    const fetchData = async () => {
+        setState((prev) => (prev === "ready" ? prev : "loading"))
+        setError(null)
+        try {
+            const res = await fetch("/api/db")
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const json = (await res.json()) as DbShape
+            setData(json)
+            setState("ready")
+        } catch (err: any) {
+            setError(err?.message ?? "Failed to load data")
+            setState("error")
+        }
+    }
+
     // Initial/full fetch
     useEffect(() => {
-        const fetchData = async () => {
-            setState("loading")
-            setError(null)
-            try {
-                const res = await fetch("/api/db")
-                if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                const json = (await res.json()) as DbShape
-                setData(json)
-                setState("ready")
-            } catch (err: any) {
-                setError(err?.message ?? "Failed to load data")
-                setState("error")
-            }
-        }
         fetchData()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reloadKey])
 
     // Live updates via WS (active job only)
@@ -254,8 +366,18 @@ function useDashboardData() {
                         const others = prev.jobs.filter((j) => j.jobId !== job?.jobId)
                         return job ? { jobs: [...others, job] } : { jobs: others }
                     })
-                    setState((prev) => (prev === "idle" ? "ready" : prev))
-                    setError(null)
+                    const isTerminal =
+                        !job ||
+                        job.status === "done" ||
+                        job.status === "failed" ||
+                        job.status === "needs_manual_review"
+                    if (isTerminal) {
+                        // refresh full list to get final status/artifacts
+                        fetchData()
+                    } else {
+                        setState((prev) => (prev === "idle" ? "ready" : prev))
+                        setError(null)
+                    }
                 }
             } catch (err: any) {
                 setError(err?.message ?? "Failed to parse WS message")
@@ -309,6 +431,7 @@ function JobHeader({
     }
 }) {
     const taskText = job.taskDescription || job.userTask || "(no task description)"
+    const [taskExpanded, setTaskExpanded] = useState(false)
     const totalSubtasks = job.plan?.subtasks?.length || job.subtasks.length
     const completedSubtasks = job.subtasks.filter((s) => s.status === "completed").length
     const progress =
@@ -334,7 +457,14 @@ function JobHeader({
             <div className="job-meta">
                 <div className="job-row">
                     <div className="job-task">
-                        <pre className="job-task-body">{taskText}</pre>
+                        <pre
+                            className={`job-task-body ${taskExpanded ? "expanded" : "collapsed"}`}
+                            onClick={() => setTaskExpanded((v) => !v)}
+                            role="button"
+                            tabIndex={0}
+                        >
+                            {taskText}
+                        </pre>
                     </div>
                 </div>
                 <div className="meta-grid">
@@ -351,6 +481,14 @@ function JobHeader({
 
 function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
     const color = statusColors[subtask.status] ?? "#4b5563"
+    const [showMeta, setShowMeta] = useState(false)
+    const started = formatTime(subtask.startedAt)
+    const finished = formatTime(subtask.finishedAt)
+    const duration =
+        subtask.status === "running" || subtask.status === "pending"
+            ? elapsedMs(subtask.startedAt)
+            : null
+
     return (
         <div className="node">
             <div className="node-status" style={{ background: color }} />
@@ -359,15 +497,22 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
                     {subtask.id} <span className="node-label">{subtask.title}</span>
                 </div>
                 <div className="node-meta">
-                    {subtask.branch && <span>Branch: {subtask.branch}</span>}
-                    {subtask.worktree && <span>Worktree: {subtask.worktree}</span>}
-                    {subtask.status === "completed" && subtask.finishedAt && (
-                        <span>Finished: {new Date(subtask.finishedAt).toLocaleTimeString()}</span>
-                    )}
+                    {started && <span>Started: {started}</span>}
+                    {duration && <span>Elapsed: {duration}</span>}
                     {subtask.status === "failed" && subtask.error && (
                         <span className="danger">{subtask.error}</span>
                     )}
+                    {finished && <span>Finished: {finished}</span>}
+                    <button className="ghost tiny" onClick={() => setShowMeta((v) => !v)}>
+                        {showMeta ? "Hide meta" : "Show meta"}
+                    </button>
                 </div>
+                {showMeta && (
+                    <div className="node-meta-detail">
+                        {subtask.branch && <span>Branch: {subtask.branch}</span>}
+                        {subtask.worktree && <span>Worktree: {subtask.worktree}</span>}
+                    </div>
+                )}
                 {subtask.summary && <div className="node-summary">{subtask.summary}</div>}
                 {!subtask.summary && subtask.last_reasoning && (
                     <div className="node-reasoning">
@@ -383,8 +528,11 @@ function SubtaskNode({ subtask }: { subtask: SubtaskRecord }) {
 }
 
 function StageNodeView({ stage }: { stage: StageNode }) {
-    const color = statusColors[stage.status] ?? "#4b5563"
+    const color = statusColors[stage.colorKey || stage.status] ?? "#4b5563"
     const showReasoning = stage.status !== "completed" && Boolean(stage.reasoning)
+    const started = formatTime(stage.startedAt)
+    const finished = formatTime(stage.finishedAt)
+    const elapsed = stage.elapsed
     return (
         <div className="node">
             <div className="node-status" style={{ background: color }} />
@@ -393,9 +541,9 @@ function StageNodeView({ stage }: { stage: StageNode }) {
                     {stage.title} <span className="node-label">{stage.status}</span>
                 </div>
                 <div className="node-meta">
-                    {stage.timestamp && (
-                        <span>Updated: {new Date(stage.timestamp).toLocaleTimeString()}</span>
-                    )}
+                    {started && <span>Started: {started}</span>}
+                    {elapsed && <span>Elapsed: {elapsed}</span>}
+                    {finished && <span>Finished: {finished}</span>}
                 </div>
                 {showReasoning && (
                     <div className="node-reasoning">
@@ -528,18 +676,22 @@ function JobCard({ job }: { job: JobRecord }) {
                     toggleArtifacts: () => setShowArtifacts((v) => !v),
                 }}
             />
-            {preMergeStages.length > 0 && (
-                <div className="stages">
-                    {preMergeStages.map((stage) => (
-                        <StageNodeView key={stage.id} stage={stage} />
-                    ))}
-                </div>
-            )}
-            {showGraph && <Graph job={job} />}
-            {mergeStage && (
-                <div className="stages">
-                    <StageNodeView key={mergeStage.id} stage={mergeStage} />
-                </div>
+            {showGraph && (
+                <>
+                    {preMergeStages.length > 0 && (
+                        <div className="stages">
+                            {preMergeStages.map((stage) => (
+                                <StageNodeView key={stage.id} stage={stage} />
+                            ))}
+                        </div>
+                    )}
+                    <Graph job={job} />
+                    {mergeStage && (
+                        <div className="stages">
+                            <StageNodeView key={mergeStage.id} stage={mergeStage} />
+                        </div>
+                    )}
+                </>
             )}
             {showArtifacts && <Artifacts job={job} />}
         </div>

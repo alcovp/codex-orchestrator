@@ -5,7 +5,7 @@ import path from "node:path"
 import type { OrchestratorContext } from "../orchestratorTypes.js"
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js"
 import { appendJobLog } from "../jobLogger.js"
-import { recordAnalysisOutput } from "../db/sqliteDb.js"
+import { recordAnalysisOutput, recordAnalysisProgress } from "../db/sqliteDb.js"
 
 const OUTPUT_TRUNCATE = 2000
 
@@ -30,18 +30,26 @@ const AnalyzeOutputSchema = z.object({
 export type CodexAnalyzeProjectInput = z.infer<typeof AnalyzeParamsSchema>
 export type CodexAnalyzeProjectResult = z.infer<typeof AnalyzeOutputSchema>
 
-type AnalyzeExec = (args: { cwd: string; prompt: string; label?: string }) => Promise<{
+type AnalyzeExec = (args: {
+    cwd: string
+    prompt: string
+    label?: string
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
+}) => Promise<{
     stdout: string
     stderr: string
 }>
 
-const defaultExec: AnalyzeExec = async ({ cwd, prompt, label }) => {
+const defaultExec: AnalyzeExec = async ({ cwd, prompt, label, onStdoutLine, onStderrLine }) => {
     return runWithCodexTee({
         command: "codex",
         args: ["exec", "--full-auto", "--config", 'model_reasoning_effort="medium"', prompt],
         cwd,
         label: label ?? "codex-analyze",
         captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+        onStdoutLine,
+        onStderrLine,
     })
 }
 
@@ -192,18 +200,39 @@ export async function codexAnalyzeProject(
     let stdout = ""
     let stderr = ""
 
+    const reasoningLines: string[] = []
+    const captureLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        reasoningLines.push(trimmed)
+        if (reasoningLines.length > 12) reasoningLines.splice(0, reasoningLines.length - 12)
+    }
+
     try {
         const result = await execImplementation({
             cwd: projectRoot,
             prompt,
             label: "codex-analyze",
-        })
+            // @ts-ignore execImplementation default supports these; safe to pass
+            onStdoutLine: captureLine,
+            onStderrLine: captureLine,
+        } as any)
         stdout = result.stdout ?? ""
         stderr = result.stderr ?? ""
         const analysis = normalizeOutput(extractJsonObject(stdout || stderr))
         await persistAnalysis(analysis, runContext?.context, params.user_task)
         return analysis
     } catch (error: any) {
+        if (reasoningLines.length > 0 && runContext?.context) {
+            try {
+                await recordAnalysisProgress({
+                    context: runContext.context,
+                    message: reasoningLines.slice(-6).join("\n"),
+                })
+            } catch {
+                /* swallow */
+            }
+        }
         stdout = (error?.stdout ?? stdout ?? "") as string
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
 

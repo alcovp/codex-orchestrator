@@ -12,7 +12,7 @@ import {
 } from "../orchestratorTypes.js"
 import { DEFAULT_CODEX_CAPTURE_LIMIT, runWithCodexTee } from "./codexExecLogger.js"
 import { appendJobLog } from "../jobLogger.js"
-import { recordRefactorOutput } from "../db/sqliteDb.js"
+import { recordRefactorOutput, markJobStatus, recordRefactorProgress } from "../db/sqliteDb.js"
 
 const execFileAsync = promisify(execFile)
 const OUTPUT_TRUNCATE = 2000
@@ -375,7 +375,16 @@ export async function codexRefactorProject(
     let stdout = ""
     let stderr = ""
 
+    const reasoningLines: string[] = []
+    const captureLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        reasoningLines.push(trimmed)
+        if (reasoningLines.length > 12) reasoningLines.splice(0, reasoningLines.length - 12)
+    }
+
     try {
+        markJobStatus(context, "refactoring")
         const codexArgs = [
             "exec",
             "--full-auto",
@@ -388,6 +397,9 @@ export async function codexRefactorProject(
             args: codexArgs,
             cwd: worktreeDir,
             label: "codex-refactor",
+            // @ts-ignore execImplementation default supports line hooks
+            onStdoutLine: captureLine,
+            onStderrLine: captureLine,
         })
         stdout = result.stdout ?? ""
         stderr = result.stderr ?? ""
@@ -398,6 +410,16 @@ export async function codexRefactorProject(
         await persistRefactor(merged, context, params.user_task)
         return merged
     } catch (error: any) {
+        if (reasoningLines.length > 0) {
+            try {
+                await recordRefactorProgress({
+                    context,
+                    message: reasoningLines.slice(-6).join("\n"),
+                })
+            } catch {
+                /* ignore */
+            }
+        }
         stdout = (error?.stdout ?? stdout ?? "") as string
         stderr = (error?.stderr ?? stderr ?? error?.message ?? "") as string
 

@@ -81,6 +81,12 @@ button.small {
     border-radius: 8px;
 }
 
+button.tiny {
+    padding: 4px 7px;
+    font-size: 11px;
+    border-radius: 6px;
+}
+
 .state {
     padding: 6px 10px;
     border-radius: 8px;
@@ -175,6 +181,13 @@ button.small {
         monospace;
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 30px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: max-height 0.2s ease;
+}
+.job-task-body.expanded {
+    max-height: 400px;
 }
 
 .job-controls {
@@ -283,6 +296,14 @@ button.small {
     font-size: 13px;
 }
 
+.node-meta-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: #a5b4fc;
+    font-size: 12px;
+}
+
 .node-summary {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
@@ -311,7 +332,10 @@ button.small {
     border-radius: 8px;
     padding: 10px;
     max-height: 150px;
-    overflow: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
     color: #e5e7eb;
     font-size: 12px;
     line-height: 1.5;

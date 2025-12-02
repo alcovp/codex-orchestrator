@@ -11,7 +11,13 @@ import {
     type OrchestratorContext,
     resolveJobId,
 } from '../orchestratorTypes.js'
-import { ensureTerminalJobStatus, recordMergeFailure, recordMergeResult, recordMergeStart } from '../db/sqliteDb.js'
+import {
+    ensureTerminalJobStatus,
+    recordMergeFailure,
+    recordMergeResult,
+    recordMergeStart,
+    recordMergeProgress,
+} from '../db/sqliteDb.js'
 import { appendJobLog } from '../jobLogger.js'
 
 const execFileAsync = promisify(execFile)
@@ -51,6 +57,7 @@ const MergeOutputSchema = z.object({
     status: z.enum(['ok', 'needs_manual_review']),
     notes: z.string(),
     touched_files: z.array(z.string()),
+    last_reasoning: z.string().optional().nullable(),
 })
 
 export type CodexMergeResultsInput = z.infer<typeof MergeInputSchema>
@@ -63,6 +70,8 @@ type MergeExec = (args: {
     label?: string
     allowNonZero?: boolean
     captureLimit?: number
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
 }) => Promise<{ stdout: string; stderr: string }>
 
 const defaultExec: MergeExec = async ({ program, args, cwd, label, captureLimit }) => {
@@ -339,6 +348,7 @@ async function resolveConflictsWithCodex({
                                              userTask,
                                              headSummary,
                                              branchSummary,
+                                             context,
                                          }: {
     branch: string
     conflictFiles: string[]
@@ -347,14 +357,26 @@ async function resolveConflictsWithCodex({
     userTask: string
     headSummary: string
     branchSummary: string
+    context: OrchestratorContext
 }) {
     const gitFileBefore = await readGitPointerFile(cwd)
+    const reasoningLines: string[] = []
+    const captureLine = (line: string) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        reasoningLines.push(trimmed)
+        if (reasoningLines.length > 12) reasoningLines.splice(0, reasoningLines.length - 12)
+    }
     const prompt = buildConflictPrompt({
         branch,
         conflictFiles,
         userTask,
         headSummary,
         branchSummary,
+    })
+    await recordMergeProgress({
+        context,
+        message: `Resolving conflicts for ${branch}: ${conflictFiles.join(', ')}`,
     })
     await exec({
         program: 'codex',
@@ -370,7 +392,15 @@ async function resolveConflictsWithCodex({
         label: `codex-merge-conflicts:${branch}`,
         // captureLimit handled inside runWithCodexTee defaults; explicit for clarity
         captureLimit: DEFAULT_CODEX_CAPTURE_LIMIT,
+        onStdoutLine: captureLine,
+        onStderrLine: captureLine,
     })
+    if (reasoningLines.length > 0) {
+        await recordMergeProgress({
+            context,
+            message: reasoningLines.slice(-6).join('\n'),
+        })
+    }
     await assertGitPointerUnchanged(cwd, gitFileBefore)
 }
 
@@ -382,9 +412,22 @@ async function mergeBranchIntoResult(options: {
     userTask: string
     headSummary: string
     branchSummary: string
+    context: OrchestratorContext
 }): Promise<{ branch: string; conflicts: string[] }> {
-    const { branch, mergeWorktree, resultBranch, exec, userTask, headSummary, branchSummary } =
-        options
+    const {
+        branch,
+        mergeWorktree,
+        resultBranch,
+        exec,
+        userTask,
+        headSummary,
+        branchSummary,
+        context,
+    } = options
+    await recordMergeProgress({
+        context,
+        message: `Merging branch ${branch} into ${resultBranch}`,
+    })
     const mergeResult = await runGit(
         ['merge', '--no-commit', '--no-ff', branch],
         mergeWorktree,
@@ -409,6 +452,7 @@ async function mergeBranchIntoResult(options: {
             userTask,
             headSummary,
             branchSummary,
+            context,
         })
 
         const statusAfterCodex = await runGit(['status', '--porcelain'], mergeWorktree, exec, true)
@@ -449,6 +493,11 @@ async function mergeBranchIntoResult(options: {
             )
         }
     }
+
+    await recordMergeProgress({
+        context,
+        message: `Merged ${branch}${hadConflicts ? ' with conflicts resolved' : ' without conflicts'}`,
+    })
 
     return { branch, conflicts: hadConflicts ? conflicts : [] }
 }
@@ -529,19 +578,20 @@ export async function codexMergeResults(
                     : 'HEAD already contains: base result branch without merged subtasks.'
             const branchSummary = result.summary || '(no summary provided)'
 
-            const summary = await mergeBranchIntoResult({
-                branch: result.branch,
-                mergeWorktree,
-                resultBranch,
-                exec: execImplementation,
-                userTask,
-                headSummary,
-                branchSummary,
-            })
-            mergeSummaries.push(summary)
-            mergedHeadSummaries.push(
-                `branch ${result.branch} (${result.subtask_id}): ${branchSummary}`,
-            )
+        const summary = await mergeBranchIntoResult({
+            branch: result.branch,
+            mergeWorktree,
+            resultBranch,
+            exec: execImplementation,
+            userTask,
+            headSummary,
+            branchSummary,
+            context,
+        })
+        mergeSummaries.push(summary)
+        mergedHeadSummaries.push(
+            `branch ${result.branch} (${result.subtask_id}): ${branchSummary}`,
+        )
         }
 
         const finalStatus = await runGit(
@@ -602,6 +652,11 @@ export async function codexMergeResults(
             status: 'ok',
             notes,
             touched_files: touchedFiles,
+            // carry last progress message for dashboard reasoning
+            last_reasoning:
+                mergedHeadSummaries.length > 0
+                    ? mergedHeadSummaries.slice(-3).join('\n')
+                    : notesBase,
         }
 
         await recordMergeResult({
