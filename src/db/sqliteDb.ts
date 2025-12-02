@@ -154,6 +154,20 @@ export function readJobStatus(context: OrchestratorContext): JobStatus | null {
     }
 }
 
+export function readSubtaskStatuses(
+    context: OrchestratorContext,
+): Array<{ id: string; status: SubtaskStatus }> {
+    try {
+        const rows = db()
+            .prepare("SELECT subtask_id, status FROM subtasks WHERE job_id = ?")
+            .all(context.jobId) as Array<{ subtask_id: string; status: SubtaskStatus }>
+        return rows.map((r) => ({ id: r.subtask_id, status: r.status }))
+    } catch (error) {
+        logDbError("readSubtaskStatuses failed", error)
+        return []
+    }
+}
+
 export function ensureTerminalJobStatus(
     context: OrchestratorContext,
     fallback: JobStatus = "done",

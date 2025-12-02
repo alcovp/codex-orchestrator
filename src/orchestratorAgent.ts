@@ -6,6 +6,11 @@ import {
     resolveRepoRoot,
     type OrchestratorContext,
 } from "./orchestratorTypes.js"
+import {
+    runDeterministicOrchestrator,
+    formatDeterministicReport,
+    type DeterministicOrchestratorOptions,
+} from "./deterministicOrchestrator.js"
 import { codexAnalyzeProjectTool } from "./tools/codexAnalyzeProjectTool.js"
 import { codexPlanTaskTool } from "./tools/codexPlanTaskTool.js"
 import { codexRefactorProjectTool } from "./tools/codexRefactorProjectTool.js"
@@ -20,6 +25,7 @@ import {
     recordMergeResult,
     ensureTerminalJobStatus,
     readJobStatus,
+    readSubtaskStatuses,
 } from "./db/sqliteDb.js"
 
 export interface OrchestratorRunOptions {
@@ -172,6 +178,45 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
         markJobStatus(context, "failed")
     }
 
+    const useAgent = process.env.ORCHESTRATOR_USE_AGENT === "1"
+
+    if (!useAgent) {
+        try {
+            const detOptions: DeterministicOrchestratorOptions = {
+                userTask: options.taskDescription,
+                baseDir: options.repoRoot,
+                projectRoot: options.repoRoot,
+                repoRoot: options.repoRoot,
+                baseBranch: options.baseBranch,
+                jobId: context.jobId,
+                pushResult: options.pushResult,
+                enablePrefactor: options.enablePrefactor,
+            }
+
+            const result = await runDeterministicOrchestrator(detOptions)
+            const output = formatDeterministicReport(result)
+            await appendJobLog(`ORCHESTRATOR OUTPUT:\n${output}`)
+
+            const finalStatus =
+                result.mergeResult.status === "needs_manual_review"
+                    ? "needs_manual_review"
+                    : "done"
+            markJobStatus(context, finalStatus)
+            ensureTerminalJobStatus(context, finalStatus)
+            return output
+        } catch (error) {
+            console.error("Deterministic orchestrator failed:", error)
+            if (error instanceof Error) {
+                await appendJobLog(`ORCHESTRATOR ERROR: ${error.message}`)
+                markFailedUnlessTerminal()
+                ensureTerminalJobStatus(context, "failed")
+            }
+            throw error
+        } finally {
+            setJobLogPath(null)
+        }
+    }
+
     try {
         const prefactorLabel = context.enablePrefactor ? "prefactor:on" : "prefactor:off"
         console.log(`[orchestrator] running agent (${prefactorLabel} -> plan -> subtasks -> merge)...`)
@@ -192,6 +237,16 @@ export async function runOrchestrator(options: OrchestratorRunOptions): Promise<
             } else {
                 // If we didn't get a proper merge JSON, treat the job as failed rather than done.
                 markFailedUnlessTerminal()
+            }
+
+            const subtaskStatuses = readSubtaskStatuses(context)
+            const open = subtaskStatuses.filter((s) => s.status === "pending" || s.status === "running")
+            if (open.length > 0) {
+                const ids = open.map((s) => s.id).join(", ")
+                await appendJobLog(
+                    `[orchestrator] pending subtasks detected after merge: ${ids}; marking job failed`,
+                )
+                markJobStatus(context, "failed")
             }
             ensureTerminalJobStatus(context, "failed")
         } catch {

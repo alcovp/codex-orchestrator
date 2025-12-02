@@ -221,6 +221,19 @@ export async function runDeterministicOrchestrator(
         await Promise.all(batchPromises)
     }
 
+    if (subtaskResults.length !== plan.subtasks.length) {
+        const completedIds = new Set(subtaskResults.map((r) => r.subtask.id))
+        const missing = plan.subtasks.filter((s) => !completedIds.has(s.id)).map((s) => s.id)
+        throw new Error(
+            `Not all subtasks completed: expected ${plan.subtasks.length}, got ${subtaskResults.length}. Missing: ${missing.join(", ")}`,
+        )
+    }
+
+    const failed = subtaskResults.filter((r) => r.result.status !== "ok").map((r) => r.subtask.id)
+    if (failed.length > 0) {
+        throw new Error(`Some subtasks failed: ${failed.join(", ")}`)
+    }
+
     const mergeResult = await codexMergeResults(
         {
             project_root: projectRoot,

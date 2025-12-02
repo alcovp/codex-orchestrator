@@ -352,8 +352,6 @@ async function resolveConflictsWithCodex({
             '--full-auto',
             '--config',
             'model_reasoning_effort="low"',
-            '--config',
-            'model_reasoning_summary="none"',
             prompt,
         ],
         cwd,
